@@ -4,7 +4,7 @@ from torch.optim import Adam
 from torch.optim import Optimizer
 import torch.nn.functional as F
 from pytorch_lightning import LightningModule
-from binconvfm.base import BaseForecaster
+from binconvfm.models.base import BaseForecaster
 
 
 class LinearForecaster(BaseForecaster):
