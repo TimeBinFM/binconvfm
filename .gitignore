@@ -129,5 +129,9 @@ Desktop.ini
 *.temp
 *.log
 
-# Poetry
-poetry.lock
+# GitHub Actions artifacts
+.github/workflows/artifacts/
+
+# Editor and formatter configs (optional - uncomment if not sharing)
+# .editorconfig
+# .pre-commit-config.yaml

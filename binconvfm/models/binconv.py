@@ -29,7 +29,7 @@ from pytorch_lightning import LightningModule
 # Local imports
 from binconvfm.layers.DynamicTanh import DynamicTanh
 from binconvfm.utils.processing import (
-    StandardScaler, TemporalScaler, BinaryQuantizer, BinScaler
+    StandardScaler, TemporalScaler, BinaryQuantizer, TransformPipeline
 )
 from binconvfm.utils.forecast import get_sequence_from_prob, most_probable_monotonic_sequence
 from binconvfm.utils.reshape import repeat
@@ -158,26 +158,26 @@ class BinConv(nn.Module):
             logger.info('No preprocessors initialized (raw data mode)')
         elif scaler_type == 'standard':
             self.scalers = [
-                BinScaler(
-                    StandardScaler(var_specific=True),
-                    BinaryQuantizer(
+                TransformPipeline([
+                    ('scaler', StandardScaler()),
+                    ('quantizer', BinaryQuantizer(
                         num_bins=self.num_bins, 
                         min_val=self.min_bin_value, 
                         max_val=self.max_bin_value
-                    )
-                ) for _ in range(self.target_dim)
+                    ))
+                ]) for _ in range(self.target_dim)
             ]
             logger.info(f'Initialized {self.target_dim} standard scaling preprocessors')
         elif scaler_type == 'temporal':
             self.scalers = [
-                BinScaler(
-                    TemporalScaler(time_first=False),
-                    BinaryQuantizer(
+                TransformPipeline([
+                    ('scaler', TemporalScaler()),
+                    ('quantizer', BinaryQuantizer(
                         num_bins=self.num_bins, 
                         min_val=self.min_bin_value, 
                         max_val=self.max_bin_value
-                    )
-                ) for _ in range(self.target_dim)
+                    ))
+                ]) for _ in range(self.target_dim)
             ]
             logger.info(f'Initialized {self.target_dim} temporal scaling preprocessors')
         else:
@@ -447,12 +447,13 @@ class BinConv(nn.Module):
         for c in range(inputs.shape[2]):  # For each target dimension
             # Apply per-sample preprocessing
             if self.scalers is not None:
-                # Fit scaler on flattened data for this dimension
-                scaler_input = inputs[:, :, c:c + 1].reshape(-1)
-                self.scalers[c].fit(scaler_input)
-                c_inputs = self.scalers[c].transform(inputs[:, :, c:c + 1])
+                # Use the pipeline transform method
+                c_inputs, pipeline_params = self.scalers[c].transform(inputs[:, :, c:c + 1])
+                # Store params for inverse transform later
+                current_pipeline_params = pipeline_params
             else:
                 c_inputs = inputs[:, :, c:c + 1]
+                current_pipeline_params = None
             
             # Handle sampling for probabilistic forecasting
             if do_sample:
@@ -483,8 +484,8 @@ class BinConv(nn.Module):
             c_forecasts = torch.cat(c_forecasts, dim=1)  # (B, prediction_length, num_bins)
             
             # Apply inverse transformation
-            if self.scalers is not None:
-                c_forecasts = self.scalers[c].inverse_transform(c_forecasts)
+            if self.scalers is not None and current_pipeline_params is not None:
+                c_forecasts = self.scalers[c].inverse_transform(c_forecasts, current_pipeline_params)
             
             # Reshape for sampling
             if do_sample:
