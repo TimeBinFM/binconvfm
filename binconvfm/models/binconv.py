@@ -65,9 +65,7 @@ class BinConv(nn.Module):
         num_1d_layers: int = 2, 
         num_blocks: int = 3,
         kernel_size_ffn: int = 51, 
-        dropout: float = 0.2, 
-        target_dim: int = 1, 
-        prediction_length: int = 36,
+        dropout: float = 0.2,
         last_layer: Literal["conv", "fc"] = 'conv',
         scaler_type: Union[Literal["standard", "temporal", "None"], None] = None
     ) -> None:
@@ -89,8 +87,6 @@ class BinConv(nn.Module):
             num_blocks: Number of convolutional blocks
             kernel_size_ffn: Kernel size for feed-forward network
             dropout: Dropout rate
-            target_dim: Number of target dimensions
-            prediction_length: Length of prediction horizon
             last_layer: Type of last layer ("conv" or "fc")
             scaler_type: Type of scaler ("standard", "temporal", or None)
             
@@ -108,11 +104,9 @@ class BinConv(nn.Module):
             
         # Store configuration
         self.context_length = context_length
-        self.prediction_length = prediction_length
         self.num_bins = num_bins
         self.min_bin_value = min_bin_value
         self.max_bin_value = max_bin_value
-        self.target_dim = target_dim
         self.is_prob_forecast = is_prob_forecast
         self.num_filters_2d = num_filters_2d
         self.num_filters_1d = num_filters_1d
@@ -124,10 +118,10 @@ class BinConv(nn.Module):
         self.kernel_size_ffn = kernel_size_ffn
         self.last_layer = last_layer
         
-        logger.info(f'BinConv initialized - dropout: {dropout}, target_dim: {self.target_dim}')
+        logger.info(f'BinConv initialized - dropout: {dropout}')
         
-        # Initialize preprocessing scalers for foundation model approach
-        self._initialize_scalers(scaler_type)
+        # Initialize preprocessing scaler for foundation model approach
+        self._initialize_scaler(scaler_type)
         
         # Initialize dropout
         self.dropout = nn.Dropout(dropout)
@@ -144,9 +138,9 @@ class BinConv(nn.Module):
         
         logger.info(f'BinConv model initialized with {sum(p.numel() for p in self.parameters())} parameters')
     
-    def _initialize_scalers(self, scaler_type: Union[str, None]) -> None:
+    def _initialize_scaler(self, scaler_type: Union[str, None]) -> None:
         """
-        Initialize preprocessing scalers for foundation model approach.
+        Initialize preprocessing scaler for foundation model approach.
         
         Args:
             scaler_type: Type of scaler to use
@@ -154,32 +148,29 @@ class BinConv(nn.Module):
         logger.info(f'Per-sample scaler type: {scaler_type}')
         
         if scaler_type is None:
-            self.scalers = None
+            self.scaler = None
             logger.info('No preprocessors initialized (raw data mode)')
         elif scaler_type == 'standard':
-            self.scalers = [
-                TransformPipeline([
+            self.scaler = TransformPipeline([
                     ('scaler', StandardScaler()),
                     ('quantizer', BinaryQuantizer(
                         num_bins=self.num_bins, 
                         min_val=self.min_bin_value, 
                         max_val=self.max_bin_value
                     ))
-                ]) for _ in range(self.target_dim)
-            ]
-            logger.info(f'Initialized {self.target_dim} standard scaling preprocessors')
+                ])
+
+            logger.info(f'Initialized a standard scaling preprocessor')
         elif scaler_type == 'temporal':
-            self.scalers = [
-                TransformPipeline([
+            self.scaler = TransformPipeline([
                     ('scaler', TemporalScaler()),
                     ('quantizer', BinaryQuantizer(
                         num_bins=self.num_bins, 
                         min_val=self.min_bin_value, 
                         max_val=self.max_bin_value
                     ))
-                ]) for _ in range(self.target_dim)
-            ]
-            logger.info(f'Initialized {self.target_dim} temporal scaling preprocessors')
+                ])
+            logger.info(f'Initialized a temporal scaling preprocessors')
         else:
             raise ValueError(f"Unsupported scaler_type: {scaler_type}. "
                            f"Must be 'standard', 'temporal', or None.")
@@ -199,81 +190,76 @@ class BinConv(nn.Module):
         logger.debug(f'Initialized activation functions: {len(self.act)} blocks')
     
     def _initialize_conv_layers(self) -> None:
-        """Initialize all convolutional layers for each target dimension."""
-        layers = []
+        """Initialize convolutional layers for single target dimension."""
+        # 2D Convolutional layers
+        conv2d = nn.ModuleList([
+            nn.Conv2d(
+                in_channels=1,
+                out_channels=self.num_filters_2d,
+                kernel_size=(self.context_length, self.kernel_size_across_bins_2d),
+                bias=True
+            ) for _ in range(self.num_blocks)
+        ])
         
-        for target_idx in range(self.target_dim):
-            # 2D Convolutional layers
-            conv2d = nn.ModuleList([
-                nn.Conv2d(
-                    in_channels=1,
-                    out_channels=self.num_filters_2d,
-                    kernel_size=(self.context_length, self.kernel_size_across_bins_2d),
-                    bias=True
-                ) for _ in range(self.num_blocks)
-            ])
-            
-            # 1D Convolutional layers
-            conv1d = nn.ModuleList([
-                nn.ModuleList([
-                    nn.Conv1d(
-                        in_channels=self.num_filters_2d if i == 0 else self.num_filters_1d,
-                        out_channels=self.context_length if i == self.num_1d_layers - 1 else self.num_filters_1d,
-                        kernel_size=self.kernel_size_across_bins_1d, 
-                        bias=True,
-                        groups=self.num_filters_1d
-                    ) for i in range(self.num_1d_layers)
-                ]) for _ in range(self.num_blocks)
-            ])
-            
-            # Feed-forward network layer
-            if self.last_layer == 'conv':
-                conv_ffn = nn.Conv1d(
-                    in_channels=self.context_length,
-                    out_channels=1,
-                    kernel_size=self.kernel_size_ffn,
-                    groups=1,
-                    bias=True
-                )
-            elif self.last_layer == 'fc':
-                class MeanOverChannel(nn.Module):
-                    def __init__(self, dim: int = -2):
-                        super().__init__()
-                        self.dim = dim
-
-                    def forward(self, x: torch.Tensor) -> torch.Tensor:
-                        return x.mean(dim=self.dim)
-
-                conv_ffn = nn.Sequential(
-                    MeanOverChannel(dim=-2),
-                    nn.Linear(in_features=self.num_bins, out_features=self.num_bins, bias=True)
-                )
-            else:
-                raise ValueError(f"Unsupported last_layer type: {self.last_layer}")
-            
-            # Activation functions for this target dimension
-            act = nn.ModuleList([
-                nn.ModuleList([
-                    DynamicTanh(
-                        normalized_shape=self.num_filters_2d if i < self.num_1d_layers else self.context_length,
-                        channels_last=False
-                    ) for i in range(1)
-                ]) for _ in range(self.num_blocks)
-            ])
-            
-            logger.debug(f'Target dimension {target_idx}:')
-            logger.debug(f'  - Conv2D blocks: {len(conv2d)}')
-            logger.debug(f'  - Conv1D blocks: {len(conv1d)} with {len(conv1d[0])} layers each')
-            logger.debug(f'  - FFN layer type: {self.last_layer}')
-            
-            layers.append(nn.ModuleDict({
-                'conv2d': conv2d,
-                'conv1d': conv1d,
-                'conv_ffn': conv_ffn,
-                'act': act,
-            }))
+        # 1D Convolutional layers
+        conv1d = nn.ModuleList([
+            nn.ModuleList([
+                nn.Conv1d(
+                    in_channels=self.num_filters_2d if i == 0 else self.num_filters_1d,
+                    out_channels=self.context_length if i == self.num_1d_layers - 1 else self.num_filters_1d,
+                    kernel_size=self.kernel_size_across_bins_1d, 
+                    bias=True,
+                    groups=self.num_filters_1d
+                ) for i in range(self.num_1d_layers)
+            ]) for _ in range(self.num_blocks)
+        ])
         
-        self.layers = nn.ModuleList(layers)
+        # Feed-forward network layer
+        if self.last_layer == 'conv':
+            conv_ffn = nn.Conv1d(
+                in_channels=self.context_length,
+                out_channels=1,
+                kernel_size=self.kernel_size_ffn,
+                groups=1,
+                bias=True
+            )
+        elif self.last_layer == 'fc':
+            class MeanOverChannel(nn.Module):
+                def __init__(self, dim: int = -2):
+                    super().__init__()
+                    self.dim = dim
+
+                def forward(self, x: torch.Tensor) -> torch.Tensor:
+                    return x.mean(dim=self.dim)
+
+            conv_ffn = nn.Sequential(
+                MeanOverChannel(dim=-2),
+                nn.Linear(in_features=self.num_bins, out_features=self.num_bins, bias=True)
+            )
+        else:
+            raise ValueError(f"Unsupported last_layer type: {self.last_layer}")
+        
+        # Activation functions
+        act = nn.ModuleList([
+            nn.ModuleList([
+                DynamicTanh(
+                    normalized_shape=self.num_filters_2d if i < self.num_1d_layers else self.context_length,
+                    channels_last=False
+                ) for i in range(1)
+            ]) for _ in range(self.num_blocks)
+        ])
+        
+        logger.debug('Initialized layers for single target dimension:')
+        logger.debug(f'  - Conv2D blocks: {len(conv2d)}')
+        logger.debug(f'  - Conv1D blocks: {len(conv1d)}')
+        logger.debug(f'  - FFN layer type: {self.last_layer}')
+        
+        self.layers = nn.ModuleDict({
+            'conv2d': conv2d,
+            'conv1d': conv1d,
+            'conv_ffn': conv_ffn,
+            'act': act,
+        })
     
     @staticmethod
     def _pad_channels(
@@ -344,13 +330,12 @@ class BinConv(nn.Module):
         
         return conv_out
     
-    def forward(self, x: torch.Tensor, layer_id: int = 0) -> torch.Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Forward pass through the BinConv model.
         
         Args:
             x: Input tensor of shape (batch_size, context_length, num_bins)
-            layer_id: Target dimension layer to use (for multi-target models)
             
         Returns:
             Output tensor of shape (batch_size, num_bins)
@@ -358,9 +343,6 @@ class BinConv(nn.Module):
         Raises:
             AssertionError: If input context length doesn't match expected length
         """
-        # Handle 4D input by squeezing
-        if len(x.shape) == 4:
-            x = x.squeeze()
         
         x = x.float()
         batch_size, context_length, num_bins = x.shape
@@ -378,8 +360,8 @@ class BinConv(nn.Module):
             # 2D Convolution
             x = self.conv_layer(
                 x, 
-                self.layers[layer_id]["conv2d"][block_idx], 
-                self.layers[layer_id]["act"][block_idx][0],
+                self.layers["conv2d"][block_idx], 
+                self.layers["act"][block_idx][0],
                 self.kernel_size_across_bins_2d, 
                 is_2d=True
             )
@@ -388,7 +370,7 @@ class BinConv(nn.Module):
             for layer_idx in range(self.num_1d_layers):
                 x = self.conv_layer(
                     x, 
-                    self.layers[layer_id]["conv1d"][block_idx][layer_idx], 
+                    self.layers["conv1d"][block_idx][layer_idx], 
                     F.relu,
                     self.kernel_size_across_bins_1d, 
                     is_2d=False
@@ -402,13 +384,13 @@ class BinConv(nn.Module):
         if self.last_layer == 'conv':
             out = self.conv_layer(
                 x, 
-                self.layers[layer_id]["conv_ffn"], 
+                self.layers["conv_ffn"], 
                 None, 
                 self.kernel_size_ffn, 
                 is_2d=False
             ).squeeze(1)
         else:
-            out = self.layers[layer_id]["conv_ffn"](x)
+            out = self.layers["conv_ffn"](x)
         
         # Apply cumulative sum if enabled (deprecated)
         if self.is_cum_sum:
@@ -419,8 +401,9 @@ class BinConv(nn.Module):
     @torch.inference_mode()
     def forecast(
         self, 
-        batch_data: torch.Tensor, 
-        num_samples: Optional[int] = None
+        batch_data: torch.Tensor,
+        prediction_length: Optional[int],
+        num_samples: Optional[int] = None,
     ) -> torch.Tensor:
         """
         Generate forecasts for input batch using autoregressive prediction.
@@ -429,117 +412,56 @@ class BinConv(nn.Module):
         independently for each sample, maintaining the foundation model philosophy.
         
         Args:
-            batch_data: Input tensor of shape (batch_size, context_length, target_dim)
+            batch_data: Input tensor of shape (batch_size, context_length, 1)
             num_samples: Number of forecast samples to generate (for probabilistic forecasting)
             
         Returns:
             Forecast tensor with shape depending on sampling:
-            - If num_samples > 1: (batch_size, num_samples, prediction_length, target_dim)
-            - Otherwise: (batch_size, 1, prediction_length, target_dim)
+            - If num_samples > 1: (batch_size, num_samples, prediction_length)
+            - Otherwise: (batch_size, 1, prediction_length)
         """
         do_sample = num_samples is not None and num_samples > 1 and self.is_prob_forecast
-        inputs = batch_data.unsqueeze(2) if batch_data.dim() == 2 else batch_data
-        
-        logger.debug(f'Forecast input shape: {inputs.shape}')
-        
-        forecasts_list = []
-        
-        for c in range(inputs.shape[2]):  # For each target dimension
-            # Apply per-sample preprocessing
-            if self.scalers is not None:
-                # Use the pipeline transform method
-                c_inputs, pipeline_params = self.scalers[c].transform(inputs[:, :, c:c + 1])
-                # Store params for inverse transform later
-                current_pipeline_params = pipeline_params
-            else:
-                c_inputs = inputs[:, :, c:c + 1]
-                current_pipeline_params = None
-            
-            # Handle sampling for probabilistic forecasting
-            if do_sample:
-                c_inputs = repeat(c_inputs.unsqueeze(1), num_samples, 1)  # (B, NS, T, D)
-                batch_size = c_inputs.shape[0]
-                c_inputs = c_inputs.view(-1, *c_inputs.shape[2:])
-            
-            # Generate forecasts autoregressively
-            current_context = c_inputs.clone()
-            c_forecasts = []
-            
-            for step in range(self.prediction_length):
-                # Forward pass
-                pred = F.sigmoid(self(current_context))  # (B, num_bins)
-                
-                # Sample or take most probable sequence
-                pred, _ = get_sequence_from_prob(pred, do_sample)
-                pred = pred.int()
-                c_forecasts.append(pred.unsqueeze(1))  # (B, 1, num_bins)
-                
-                # Update context for next step
-                next_input = pred.unsqueeze(1)
-                if len(current_context.shape) == 4:
-                    next_input = next_input.unsqueeze(1)
-                current_context = torch.cat([current_context[:, 1:], next_input], dim=1)
-            
-            # Concatenate forecasts
-            c_forecasts = torch.cat(c_forecasts, dim=1)  # (B, prediction_length, num_bins)
-            
-            # Apply inverse transformation
-            if self.scalers is not None and current_pipeline_params is not None:
-                c_forecasts = self.scalers[c].inverse_transform(c_forecasts, current_pipeline_params)
-            
-            # Reshape for sampling
-            if do_sample:
-                c_forecasts = c_forecasts.view(batch_size, num_samples, *c_forecasts.shape[1:])
-            else:
-                c_forecasts = c_forecasts.unsqueeze(1)  # (B, 1, T, D)
-            
-            # Add dimension for multi-target
-            if inputs.shape[2] > 1:
-                c_forecasts = c_forecasts.unsqueeze(-2)  # (B, 1, T, D, num_bins)
-            
-            forecasts_list.append(c_forecasts)
-        
-        # Concatenate forecasts from all target dimensions
-        forecasts = torch.concat(forecasts_list, dim=-2)
-        
-        logger.debug(f'Generated forecasts shape: {forecasts.shape}')
-        return forecasts
-    
-    def predict(self, x: torch.Tensor, prediction_length: int) -> torch.Tensor:
-        """
-        Autoregressive prediction over `prediction_length` steps.
-        
-        Args:
-            x: Input tensor of shape (batch_size, context_length, num_bins)
-            prediction_length: Number of future steps to forecast
-            
-        Returns:
-            Tensor of shape (batch_size, prediction_length, num_bins)
-        """
-        device = next(self.parameters()).device
-        x = x.to(device)
-        current_context = x.clone()
-        forecasts = []
-        
-        logger.debug(f'Starting prediction for {prediction_length} steps')
-        
-        for i in range(prediction_length):
+        if self.scaler is not None:
+            c_inputs, current_pipeline_params = self.scaler.transform(batch_data)
+            c_inputs = c_inputs.squeeze(-2)
+        else:
+            c_inputs = batch_data
+            current_pipeline_params = None
+
+        if do_sample:
+            c_inputs = repeat(c_inputs.unsqueeze(1), num_samples, 1)  # (B, NS, T, D)
+            batch_size = c_inputs.shape[0]
+            c_inputs = c_inputs.view(-1, *c_inputs.shape[2:]) # to process using only one inference
+
+        current_context = c_inputs.clone()
+        c_forecasts = []
+        for step in range(prediction_length):
+            # Forward pass
             pred = F.sigmoid(self(current_context))  # (B, num_bins)
-            
-            if i % 10 == 0:  # Log every 10th step to avoid spam
-                logger.debug(f'Prediction step {i}/{prediction_length}')
-            
-            pred, _ = most_probable_monotonic_sequence(pred)
-            pred = pred.int()
-            forecasts.append(pred.unsqueeze(1))  # (B, 1, num_bins)
-            
-            next_input = pred.unsqueeze(1)
+
+            # Sample or take most probable sequence
+            pred, _ = get_sequence_from_prob(pred, do_sample)
+            pred = pred.int().unsqueeze(1) # (B, 1, num_bins)
+            c_forecasts.append(pred)
+
+            # Update context for next step
+            next_input = pred
             current_context = torch.cat([current_context[:, 1:], next_input], dim=1)
-        
-        result = torch.cat(forecasts, dim=1)  # (B, prediction_length, num_bins)
-        logger.debug(f'Prediction completed - output shape: {result.shape}')
-        
-        return result
+
+        # Concatenate forecasts
+        c_forecasts = torch.cat(c_forecasts, dim=1)  # (B, prediction_length, num_bins)
+
+        # Apply inverse transformation
+        if self.scaler is not None and current_pipeline_params is not None:
+            c_forecasts = self.scaler.inverse_transform(c_forecasts.unsqueeze(0), current_pipeline_params)
+
+        # Reshape for sampling
+        if do_sample:
+            c_forecasts = c_forecasts.view(batch_size, num_samples, *c_forecasts.shape[1:])
+        else:
+            c_forecasts = c_forecasts.unsqueeze(1)  # (B, 1, T, D)
+
+        return c_forecasts
 
 
 class LightningBinConv(BinConv, LightningModule):
@@ -580,13 +502,15 @@ class LightningBinConv(BinConv, LightningModule):
             torch.Tensor: Training loss for this batch
         """
         inputs, targets = batch
-        
-        # For foundation model training, we process samples with their own statistics
-        # but handle this efficiently in batch mode
-        
-        # Simple approach for now - use raw inputs and binary cross-entropy
-        # In practice, you might want to apply preprocessing here
+
+
+        if self.scaler is not None:
+            inputs, params = self.scaler.transform(inputs)
+            targets, _ = self.scaler.transform(targets.unsqueeze(-1), params)
+            inputs, targets = inputs.squeeze(), targets.squeeze()
+
         logits = self(inputs)
+
         loss = F.binary_cross_entropy_with_logits(logits, targets)
         
         # Log metrics
@@ -609,8 +533,12 @@ class LightningBinConv(BinConv, LightningModule):
             torch.Tensor: Validation loss for this batch
         """
         inputs, targets = batch
-        
-        # Same processing as training
+
+        if self.scaler is not None:
+            inputs, params = self.scaler.transform(inputs)
+            targets, _ = self.scaler.transform(targets.unsqueeze(-1), params)
+            inputs, targets = inputs.squeeze(), targets.squeeze()
+
         logits = self(inputs)
         loss = F.binary_cross_entropy_with_logits(logits, targets)
         

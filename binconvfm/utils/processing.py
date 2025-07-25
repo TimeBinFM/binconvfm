@@ -80,12 +80,13 @@ class BaseTransform:
         """Compatibility method - returns self since transformations are stateless."""
         return self
     
-    def transform(self, data: torch.Tensor) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+    def transform(self, data: torch.Tensor, params: Dict[str, torch.Tensor] = None) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         """
         Transform data and return transformed data with parameters.
         
         Args:
             data: Input tensor
+            params: Optional pre-computed parameters. If provided, uses these instead of computing new ones.
             
         Returns:
             Tuple of (transformed_data, params)
@@ -135,33 +136,40 @@ class StandardScaler(BaseTransform):
         else:
             return f"{dims}D tensor"
     
-    def transform(self, data: torch.Tensor) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+    def transform(self, data: torch.Tensor, params: Dict[str, torch.Tensor] = None) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         """
         Transform data using per-sample standardization.
         
         Args:
             data: Input tensor of shape (batch_size, context_length, n_features)
+            params: Optional pre-computed parameters. If provided, uses these instead of computing new ones.
+                   Should contain 'mean' and 'std' keys.
             
         Returns:
             Tuple of (standardized_data, params)
         """
         self._validate_input_shape(data, self.input_dims, "transform")
         
-        # Compute per-target statistics for each sample
-        mean = data.mean(dim=1, keepdim=True)  # (batch_size, 1, n_features)
-        std = data.std(dim=1, keepdim=True, unbiased=False)  # (batch_size, 1, n_features)
-        
-        # Prevent division by zero by adding appropriate epsilon
-        eps = torch.finfo(data.dtype).eps
-        std = std + eps
+        if params is not None:
+            # Use provided parameters
+            mean = params['mean'].to(data.device)
+            std = params['std'].to(data.device)
+        else:
+            # Compute per-target statistics for each sample
+            mean = data.mean(dim=1, keepdim=True)  # (batch_size, 1, n_features)
+            std = data.std(dim=1, keepdim=True, unbiased=False)  # (batch_size, 1, n_features)
+            
+            # Prevent division by zero by adding appropriate epsilon
+            eps = torch.finfo(data.dtype).eps
+            std = std + eps
         
         # Apply transformation
         transformed = (data - mean) / std
         
         # Store parameters
-        params = {'mean': mean, 'std': std}
+        result_params = {'mean': mean, 'std': std}
         
-        return transformed, params
+        return transformed, result_params
     
     def inverse_transform(self, data: torch.Tensor, params: Dict[str, torch.Tensor]) -> torch.Tensor:
         """
@@ -204,32 +212,38 @@ class TemporalScaler(BaseTransform):
         else:
             return f"{dims}D tensor"
     
-    def transform(self, data: torch.Tensor) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+    def transform(self, data: torch.Tensor, params: Dict[str, torch.Tensor] = None) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         """
         Transform data using per-sample temporal scaling.
         
         Args:
             data: Input tensor of shape (batch_size, context_length, n_features)
+            params: Optional pre-computed parameters. If provided, uses these instead of computing new ones.
+                   Should contain 'mean' key.
             
         Returns:
             Tuple of (scaled_data, params)
         """
         self._validate_input_shape(data, self.input_dims, "transform")
         
-        # Compute mean for each sample and feature (same as StandardScaler)
-        mean = data.mean(dim=1, keepdim=True)  # (batch_size, 1, n_features)
-        
-        # Take absolute value and add epsilon to prevent division by zero
-        eps = torch.finfo(data.dtype).eps
-        mean = torch.abs(mean) + eps
+        if params is not None:
+            # Use provided parameters
+            mean = params['mean'].to(data.device)
+        else:
+            # Compute mean for each sample and feature (same as StandardScaler)
+            mean = data.mean(dim=1, keepdim=True)  # (batch_size, 1, n_features)
+            
+            # Take absolute value and add epsilon to prevent division by zero
+            eps = torch.finfo(data.dtype).eps
+            mean = torch.abs(mean) + eps
         
         # Apply transformation
         transformed = data / mean
         
         # Store parameters
-        params = {'mean': mean}
+        result_params = {'mean': mean}
         
-        return transformed, params
+        return transformed, result_params
     
     def inverse_transform(self, data: torch.Tensor, params: Dict[str, torch.Tensor]) -> torch.Tensor:
         """
@@ -291,18 +305,23 @@ class BinaryQuantizer(BaseTransform):
         else:
             return f"{dims}D tensor"
     
-    def transform(self, data: torch.Tensor) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+    def transform(self, data: torch.Tensor, params: Dict[str, torch.Tensor] = None) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         """
         Transform data to binary quantized representation.
         
         Args:
             data: Input tensor of shape (batch_size, context_length, n_features)
+            params: Optional pre-computed parameters. For BinaryQuantizer, this is ignored 
+                   since quantization parameters are stored in the object itself.
             
         Returns:
             Tuple of (binary_data, empty_params) where binary_data has shape 
             (batch_size, context_length, n_features, num_bins)
         """
         self._validate_input_shape(data, self.input_dims, "transform")
+        
+        # Note: params argument is ignored for BinaryQuantizer since bin parameters
+        # are stateful and stored in the object itself
         
         # Move bin_edges to same device as data
         bin_edges = self.bin_edges.to(data.device)
@@ -317,9 +336,9 @@ class BinaryQuantizer(BaseTransform):
         binary_vectors = (data_expanded >= bin_thresholds).float()
         
         # Return empty params dict for consistency (params are stored in object)
-        params = {}
+        result_params = {}
         
-        return binary_vectors, params
+        return binary_vectors, result_params
     
     def inverse_transform(self, data: torch.Tensor, params: Dict[str, torch.Tensor]) -> torch.Tensor:
         """
@@ -392,25 +411,31 @@ class TransformPipeline:
             transformer.fit(data)
         return self
     
-    def transform(self, data: torch.Tensor) -> Tuple[torch.Tensor, List[Dict[str, torch.Tensor]]]:
+    def transform(self, data: torch.Tensor, all_params: List[Dict[str, torch.Tensor]] = None) -> Tuple[torch.Tensor, List[Dict[str, torch.Tensor]]]:
         """
         Apply all transformations in sequence.
         
         Args:
             data: Input tensor of shape (batch_size, context_length, n_features)
+            all_params: Optional pre-computed parameters for all steps. If provided, 
+                       uses these instead of computing new ones.
             
         Returns:
             Tuple of (final_transformed_data, list_of_params_per_step)
         """
         current_data = data
-        all_params = []
+        result_params = []
         
         for i, (name, transformer) in enumerate(self.steps):
             logger.debug(f'Applying transformation step {i+1}/{len(self.steps)}: {name}')
-            current_data, params = transformer.transform(current_data)
-            all_params.append(params)
+            
+            # Use provided params if available, otherwise None (compute new ones)
+            step_params = all_params[i] if all_params is not None else None
+            
+            current_data, params = transformer.transform(current_data, step_params)
+            result_params.append(params)
         
-        return current_data, all_params
+        return current_data, result_params
     
     def inverse_transform(self, data: torch.Tensor, all_params: List[Dict[str, torch.Tensor]]) -> torch.Tensor:
         """
