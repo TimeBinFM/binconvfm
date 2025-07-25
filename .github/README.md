@@ -1,6 +1,6 @@
 # Continuous Integration (CI)
 
-This project uses GitHub Actions for continuous integration to automatically run tests and linting on every commit and pull request.
+This project uses GitHub Actions for continuous integration to automatically run tests on every commit and pull request.
 
 ## Workflows
 
@@ -14,13 +14,6 @@ The CI workflow runs on every push to `main` and `develop` branches, as well as 
 - Installs test dependencies (`pytest`, `pytest-cov`)
 - Runs comprehensive test suite with coverage reporting
 - Uploads coverage reports to Codecov
-
-**Lint Job:**
-- Runs code quality checks with multiple tools:
-  - **Black**: Code formatting
-  - **isort**: Import sorting
-  - **flake8**: Style guide enforcement
-  - **mypy**: Type checking (non-blocking)
 
 ## Local Development
 
@@ -36,27 +29,10 @@ poetry run pytest tests/ -v
 poetry run pytest tests/ -v --cov=binconvfm --cov-report=term-missing
 ```
 
-### Code Quality Checks
-```bash
-# Format code with Black
-poetry run black binconvfm/ tests/
-
-# Sort imports with isort
-poetry run isort binconvfm/ tests/
-
-# Check style with flake8
-poetry run flake8 binconvfm/ tests/
-
-# Type check with mypy
-poetry run mypy binconvfm/ --ignore-missing-imports
-```
-
 ### Configuration
 
-- **Black**: Configured in `pyproject.toml` with 100 character line length
-- **isort**: Configured in `pyproject.toml` to work with Black
-- **flake8**: Configured in `.flake8` with E203, W503 ignored for Black compatibility
 - **pytest**: Configured in `pyproject.toml` with test discovery settings
+- **coverage**: Reports uploaded to Codecov automatically via CI
 
 ## Status Badges
 
