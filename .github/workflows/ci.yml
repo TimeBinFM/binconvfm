@@ -38,8 +38,7 @@ jobs:
     
     - name: Install dependencies
       run: |
-        poetry install
-        poetry add pytest pytest-cov --group dev
+        poetry install --with dev
     
     - name: Run tests
       run: |
@@ -71,9 +70,17 @@ jobs:
         virtualenvs-create: true
         virtualenvs-in-project: true
     
-    - name: Install linting dependencies
+    - name: Cache Poetry dependencies
+      uses: actions/cache@v3
+      with:
+        path: .venv
+        key: ${{ runner.os }}-poetry-${{ hashFiles('**/poetry.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-poetry-
+    
+    - name: Install dependencies
       run: |
-        poetry add black flake8 isort mypy --group dev
+        poetry install --with dev
     
     - name: Run black
       run: poetry run black --check --diff binconvfm/ tests/
