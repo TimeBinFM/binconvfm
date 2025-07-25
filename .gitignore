@@ -1,4 +1,137 @@
-binconvfm/.ipynb_checkpoints/*
-binconvfm/__pycache__/*
-notebooks/checkpoints/*
-notebooks/.ipynb_checkpoints/*
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+.python-version
+
+# celery beat schedule file
+celerybeat-schedule
+
+# SageMath parsed files
+*.sage.py
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# PyTorch Lightning logs and checkpoints
+lightning_logs/
+checkpoints/
+*.ckpt
+
+# TensorBoard logs
+logs/
+runs/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Model files (large files that shouldn't be committed)
+*.pth
+*.pt
+*.h5
+*.pkl
+*.joblib
+
+# Data files (uncomment if you don't want to commit data)
+# data/
+# *.csv
+# *.json
+# *.parquet
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+
+# GitHub Actions artifacts
+.github/workflows/artifacts/
+
+# Editor and formatter configs (optional - uncomment if not sharing)
+# .editorconfig
+# .pre-commit-config.yaml
