@@ -19,7 +19,7 @@ def list_arrow_files(dataset_name):
     return filtered_files
 
 class PostProcessingDataset(IterableDataset):
-    def __init__(self, file_names, window_size=32, prediction_depth=1, seed=42, batch_size=64, num_workers=1, split='train', 
+    def __init__(self, file_names, window_size=32, prediction_depth=1, seed=42, batch_size=64, split='train', 
                  dataset_name="Salesforce/GiftEvalPretrain"):
         super().__init__()
 
@@ -28,15 +28,12 @@ class PostProcessingDataset(IterableDataset):
         self.prediction_depth = prediction_depth
         self.seed = seed
         self.batch_size = batch_size
-        self.num_workers = num_workers
 
         self.split = split
         self.dataset_name = dataset_name
 
-        self.worker_datasets = [self.__build_worker_dataset(worker_id) for worker_id in range(num_workers)]
-
-    def __build_worker_dataset(self, worker_id):
-        worker_file_names = self.__get_worker_file_names(worker_id)
+    def __build_worker_dataset(self, worker_id, num_workers):
+        worker_file_names = self.__get_worker_file_names(worker_id, num_workers)
         worker_file_names_left, worker_file_names_right = self.__split_file_names(worker_file_names)
 
         file_name_dict = {
@@ -83,30 +80,25 @@ class PostProcessingDataset(IterableDataset):
         half_length = len(file_names) // 2
         return file_names[:half_length], file_names[half_length:]
 
-    def __get_worker_file_names(self, worker_id):
-        if self.num_workers == 1:
+    def __get_worker_file_names(self, worker_id, num_workers):
+        if num_workers == 1:
             return self.file_names
         
-        per_worker = int(len(self.file_names) / self.num_workers)
+        per_worker = int(len(self.file_names) / num_workers)
         
         start = worker_id * per_worker
         # Last worker might take the remainder
-        end = (worker_id + 1) * per_worker if worker_id != self.num_workers - 1 else len(self.file_names)
+        end = (worker_id + 1) * per_worker if worker_id != num_workers - 1 else len(self.file_names)
 
         return self.file_names[start:end]
 
         
     def __iter__(self):
-        ds = self.worker_datasets[self.__get_worker_id()]
+        worker_info = get_worker_info()
+        
+        ds = self.__build_worker_dataset(
+            worker_info.id, worker_info.num_workers
+        ) if worker_info is not None else self.__build_worker_dataset(0, 1)
         
         for item in iter(ds):
             yield item
-
-    def __get_worker_id(self):
-        worker_info = get_worker_info()
-        if worker_info is None:
-            return 0
-
-        assert self.num_workers == self.num_workers, 'dataset numm_workers must match the passed num_workers'
-        
-        return worker_info.id
