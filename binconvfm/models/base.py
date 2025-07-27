@@ -8,10 +8,7 @@ from binconvfm.utils.metrics import mase, crps
 class BaseForecaster:
     def __init__(
         self,
-        input_len: int,
-        output_len: int,
         quantiles: list[float] = [(i + 1) / 10 for i in range(9)],
-        n_samples: int = 1000,
         batch_size: int = 32,
         num_epochs: int = 10,
         lr: float = 0.001,
@@ -19,10 +16,7 @@ class BaseForecaster:
         enable_progress_bar: bool = True,
         logging: bool = False,
     ):
-        self.input_len = input_len
-        self.output_len = output_len
         self.quantiles = quantiles
-        self.n_samples = n_samples
         self.batch_size = batch_size
         self.num_epochs = num_epochs
         self.lr = lr
@@ -76,28 +70,22 @@ class BaseForecaster:
         return self.trainer.predict(
             self.model,
             dataloaders=dataloader,
-        )
+        )[0]
 
 
 class BaseForecasterModule(LightningModule):
-    def __init__(self, input_len, output_len, quantiles, n_samples, lr):
+    def __init__(self, quantiles, lr):
         """
         PyTorch Lightning module for LSTM forecasting.
 
         Args:
-            input_len (int): Length of input sequence.
-            output_len (int): Length of output sequence.
             hidden_dim (int): Hidden dimension of LSTM.
             n_layers (int): Number of LSTM layers.
-            n_samples (int): Number of samples for probabilistic output.
             lr (float): Learning rate.
         """
         super().__init__()
         self.save_hyperparameters()
-        self.input_len = input_len
-        self.output_len = output_len
         self.quantiles = quantiles
-        self.n_samples = n_samples
         self.lr = lr
 
     def training_step(self, batch, batch_idx):
@@ -111,8 +99,8 @@ class BaseForecasterModule(LightningModule):
         return loss
 
     def test_step(self, batch, batch_idx):
-        input_seq, horizon, target_seq = batch
-        pred_seq = self.model(input_seq, horizon)  # (batch, n_samples, output_len)
+        input_seq, horizon, n_samples, target_seq = batch
+        pred_seq = self.model(input_seq, horizon, n_samples)  # (batch, n_samples, output_len)
         metrics = {
             "mase": mase(pred_seq, target_seq),
             "crps": crps(pred_seq, target_seq, self.quantiles),
@@ -120,5 +108,5 @@ class BaseForecasterModule(LightningModule):
         self.log_dict(metrics, prog_bar=True)
 
     def predict_step(self, batch, batch_idx):
-        input_seq, horizon, _ = batch
-        return self.model(input_seq, horizon)
+        input_seq, horizon, n_samples, _ = batch
+        return self.model(input_seq, horizon, n_samples)
