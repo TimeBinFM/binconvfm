@@ -4,7 +4,7 @@ import torch.nn as nn
 from torch.optim import Adam
 from torch.optim import Optimizer
 import torch.nn.functional as F
-from binconvfm.models.base import BaseForecaster, BaseForecasterModule
+from binconvfm.models.base import BaseForecaster, BaseLightningModule
 
 
 class LSTMForecaster(BaseForecaster):
@@ -12,6 +12,8 @@ class LSTMForecaster(BaseForecaster):
         self,
         hidden_dim: int = 64,
         n_layers: int = 1,
+        horizon: int = 1,
+        n_samples: int = 1000,
         quantiles: list[float] = [(i + 1) / 10 for i in range(9)],
         batch_size: int = 32,
         num_epochs: int = 10,
@@ -24,10 +26,10 @@ class LSTMForecaster(BaseForecaster):
         Initialize the LSTMForecaster.
 
         Args:
-            input_len (int): Length of input sequence.
-            output_len (int): Length of output sequence to forecast.
             hidden_dim (int): Number of hidden units in LSTM.
             n_layers (int): Number of LSTM layers.
+            horizon (int): Length of output sequence to forecast.
+            n_samples (int): Number of samples to generate.
             quantiles (list[float]): List of quantiles for probabilistic forecasting.
             batch_size (int): Batch size for training.
             num_epochs (int): Number of training epochs.
@@ -37,6 +39,8 @@ class LSTMForecaster(BaseForecaster):
             logging (bool): Enable logging.
         """
         super().__init__(
+            horizon,
+            n_samples,
             quantiles,
             batch_size,
             num_epochs,
@@ -45,26 +49,37 @@ class LSTMForecaster(BaseForecaster):
             enable_progress_bar,
             logging,
         )
+        self.hidden_dim = hidden_dim
+        self.n_layers = n_layers
+
+    def _create_model(self):
+        """
+        Create and assign the LSTMModule model to this forecaster.
+        """
         self.model = LSTMModule(
-            hidden_dim,
-            n_layers,
+            self.hidden_dim,
+            self.n_layers,
+            self.horizon,
+            self.n_samples,
             self.quantiles,
             self.lr,
         )
 
 
-class LSTMModule(BaseForecasterModule):
-    def __init__(self, hidden_dim, n_layers, quantiles, lr):
+class LSTMModule(BaseLightningModule):
+    def __init__(self, hidden_dim, n_layers, horizon, n_samples, quantiles, lr):
         """
-        PyTorch Lightning module for LSTM forecasting.
+        Initialize the LSTMModule for PyTorch Lightning training.
 
         Args:
             hidden_dim (int): Hidden dimension of LSTM.
             n_layers (int): Number of LSTM layers.
+            horizon (int): Forecasting horizon.
+            n_samples (int): Number of samples to generate.
             quantiles (list[float]): List of quantiles for probabilistic forecasting.
             lr (float): Learning rate.
         """
-        super().__init__(quantiles, lr)
+        super().__init__(horizon, n_samples, quantiles, lr)
         self.save_hyperparameters()
         self.model = LSTM(hidden_dim, n_layers)
 
@@ -78,19 +93,20 @@ class LSTMModule(BaseForecasterModule):
         optimizer = Adam(self.model.parameters(), lr=self.lr)
         return optimizer
 
-    def loss(self, batch: tuple) -> Tensor:
+    def loss(self, batch, batch_idx):
         """
         Compute the mean squared error loss for a batch.
 
         Args:
-            batch (Tensor): Tuple of (input_seq, horizon, n_samples, target_seq).
+            batch (Tensor): Tuple of (input_seq, target_seq).
+            batch_idx (int): Index of the batch.
 
         Returns:
             Tensor: Loss value.
         """
-        input_seq, horizon, n_samples, target_seq = batch
+        input_seq, target_seq = batch
         pred_seq = self.model(
-            input_seq, horizon, n_samples=[1], y_teacher=target_seq
+            input_seq, self.horizon, n_samples=1, y=target_seq
         )  # (batch, n_samples, output_len)
         pred_seq = pred_seq.mean(dim=1)
         loss = F.mse_loss(pred_seq, target_seq)
@@ -111,7 +127,7 @@ class LSTM(nn.Module):
         self.lstm = nn.LSTM(1, hidden_dim, n_layers, batch_first=True)
         self.out_proj = nn.Linear(hidden_dim, 1)
 
-    def forward(self, x, horizon, n_samples, y_teacher=None):
+    def forward(self, x, horizon, n_samples, y=None):
         """
         Vectorized forward pass for the LSTM model with random sampling.
 
@@ -119,7 +135,7 @@ class LSTM(nn.Module):
             x (Tensor): Input sequence of shape (batch, input_len).
             horizon (int): Forecasting horizon (length of output sequence).
             n_samples (int): Number of samples to generate.
-            y_teacher (Tensor, optional): Teacher-forced target sequence (batch, output_len).
+            y (Tensor, optional): Teacher-forced target sequence (batch, output_len).
 
         Returns:
             Tensor: Forecast samples of shape (batch, n_samples, output_len).
@@ -132,34 +148,42 @@ class LSTM(nn.Module):
         _, (h, c) = self.lstm(x)  # h, c: (num_layers, batch, hidden_size)
 
         # Expand hidden and cell states for n_samples
-        n_samples = n_samples[0]
         h = h.unsqueeze(2).expand(-1, batch_size, n_samples, -1).contiguous()
         c = c.unsqueeze(2).expand(-1, batch_size, n_samples, -1).contiguous()
         h = h.view(h.size(0), batch_size * n_samples, -1)
         c = c.view(c.size(0), batch_size * n_samples, -1)
 
         # Initial input: random noise for each sample
-        input = torch.rand(batch_size, n_samples, 1, device=device)  # (batch, n_samples, 1)
+        input = torch.rand(
+            batch_size, n_samples, 1, device=device
+        )  # (batch, n_samples, 1)
         input = input.view(batch_size * n_samples, 1, 1)  # (batch * n_samples, 1, 1)
 
         outputs = []
-        horizon = horizon[0]
 
         for t in range(horizon):
-            out, (h, c) = self.lstm(input, (h, c))  # (batch * n_samples, 1, hidden_size)
+            out, (h, c) = self.lstm(
+                input, (h, c)
+            )  # (batch * n_samples, 1, hidden_size)
             pred = self.out_proj(out)  # (batch * n_samples, 1, 1)
             outputs.append(pred.squeeze(-1))  # (batch * n_samples, 1)
 
-            if self.training and y_teacher is not None:
-                # Use teacher forcing: repeat y_teacher for n_samples
-                next_input = y_teacher[:, t : t + 1]  # (batch, 1)
+            if self.training and y is not None:
+                # Use teacher forcing: repeat y for n_samples
+                next_input = y[:, t : t + 1]  # (batch, 1)
                 next_input = next_input.unsqueeze(1)  # (batch, 1, 1)
-                next_input = next_input.expand(batch_size, n_samples, 1)  # (batch, n_samples, 1)
-                next_input = next_input.reshape(batch_size * n_samples, 1, 1)  # (batch * n_samples, 1, 1)
+                next_input = next_input.expand(
+                    batch_size, n_samples, 1
+                )  # (batch, n_samples, 1)
+                next_input = next_input.reshape(
+                    batch_size * n_samples, 1, 1
+                )  # (batch * n_samples, 1, 1)
                 input = next_input
             else:
                 input = pred  # use prediction as next input
 
         outputs = torch.cat(outputs, dim=1)  # (batch * n_samples, horizon)
-        outputs = outputs.view(batch_size, n_samples, horizon)  # (batch, n_samples, horizon)
+        outputs = outputs.view(
+            batch_size, n_samples, horizon
+        )  # (batch, n_samples, horizon)
         return outputs
