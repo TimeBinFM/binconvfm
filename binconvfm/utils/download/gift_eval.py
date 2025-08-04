@@ -1,3 +1,4 @@
+import random
 import re
 import torch
 from huggingface_hub import list_repo_files
@@ -20,7 +21,7 @@ def list_arrow_files(dataset_name):
     return filtered_files
 
 class PostProcessingDataset(IterableDataset):
-    def __init__(self, file_names, window_size=32, prediction_depth=1, seed=42, batch_size=64, parallel_file_count=2, split='train', 
+    def __init__(self, file_names, window_size=32, prediction_depth=1, seed=42, batch_size=64, parallel_file_count=2, prefetch_depth=1024, split='train', 
                  dataset_name="Salesforce/GiftEvalPretrain"):
         super().__init__()
 
@@ -30,13 +31,15 @@ class PostProcessingDataset(IterableDataset):
         self.seed = seed
         self.batch_size = batch_size
         self.parallel_file_count = parallel_file_count
+        self.prefetch_depth = prefetch_depth
 
         self.split = split
         self.dataset_name = dataset_name
+        self.rng = random.Random(self.seed)
 
-    def __build_worker_dataset(self, worker_id, num_workers, parallel_file_count):
+    def __build_worker_dataset(self, worker_id, num_workers):
         worker_file_names = self.__get_worker_file_names(worker_id, num_workers)
-        file_chunks = self.__split_file_names(worker_file_names, parallel_file_count)
+        file_chunks = self.__split_file_names(worker_file_names, self.parallel_file_count)
 
         file_name_dict = {
             f'stream_{i}': file_chunk
@@ -55,18 +58,26 @@ class PostProcessingDataset(IterableDataset):
 
         mixed_dataset = ProbabilisticMixingDataset(dataset_dict, seed=self.seed)
 
-        def collate_list_of_tuples(data):
-            features, targets = zip(*data)
-            features = torch.stack(features)
-            targets = torch.stack(targets)
-            return features, targets
+        def shuffle_with_seed(lst):
+            self.rng.shuffle(lst)
+            return lst
+
 
         return (
             Builder(mixed_dataset)
+                .batch(self.prefetch_depth) # prefetch prefetch_depth of items to randomly shuffle them
+                .map(shuffle_with_seed)
+                .flat()
                 .batch(self.batch_size)
-                .map(collate_list_of_tuples)
+                .map(self.__collate_list_of_tuples)
                 .build()
         )
+
+    def __collate_list_of_tuples(self, data):
+        features, targets = zip(*data)
+        features = torch.stack(features)
+        targets = torch.stack(targets)
+        return features, targets
         
 
     def __load_dataset(self, file_names):
@@ -108,8 +119,8 @@ class PostProcessingDataset(IterableDataset):
         worker_info = get_worker_info()
         
         ds = self.__build_worker_dataset(
-            worker_info.id, worker_info.num_workers, self.parallel_file_count
-        ) if worker_info is not None else self.__build_worker_dataset(0, 1, self.parallel_file_count)
+            worker_info.id, worker_info.num_workers
+        ) if worker_info is not None else self.__build_worker_dataset(0, 1)
         
         for item in iter(ds):
             yield item
