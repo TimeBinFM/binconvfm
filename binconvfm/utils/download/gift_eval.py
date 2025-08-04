@@ -6,6 +6,7 @@ from torch.utils.data import IterableDataset, get_worker_info
 from preprocessing.transform.dataset_builder import Builder
 from preprocessing.transform.probabilistic_mixing_dataset import ProbabilisticMixingDataset
 from preprocessing.downloader.gift_eval import GiftEvalWrapperDataset
+from preprocessing.transform.concat_dataset import ConcatDataset
 
 
 def list_arrow_files(dataset_name):
@@ -19,7 +20,7 @@ def list_arrow_files(dataset_name):
     return filtered_files
 
 class PostProcessingDataset(IterableDataset):
-    def __init__(self, file_names, window_size=32, prediction_depth=1, seed=42, batch_size=64, split='train', 
+    def __init__(self, file_names, window_size=32, prediction_depth=1, seed=42, batch_size=64, parallel_file_count=2, split='train', 
                  dataset_name="Salesforce/GiftEvalPretrain"):
         super().__init__()
 
@@ -28,17 +29,18 @@ class PostProcessingDataset(IterableDataset):
         self.prediction_depth = prediction_depth
         self.seed = seed
         self.batch_size = batch_size
+        self.parallel_file_count = parallel_file_count
 
         self.split = split
         self.dataset_name = dataset_name
 
-    def __build_worker_dataset(self, worker_id, num_workers):
+    def __build_worker_dataset(self, worker_id, num_workers, parallel_file_count):
         worker_file_names = self.__get_worker_file_names(worker_id, num_workers)
-        worker_file_names_left, worker_file_names_right = self.__split_file_names(worker_file_names)
+        file_chunks = self.__split_file_names(worker_file_names, parallel_file_count)
 
         file_name_dict = {
-            'left': worker_file_names_left,
-            'right': worker_file_names_right
+            f'stream_{i}': file_chunk
+            for i, file_chunk in enumerate(file_chunks)
         }
 
         dataset_dict = {
@@ -68,17 +70,26 @@ class PostProcessingDataset(IterableDataset):
         
 
     def __load_dataset(self, file_names):
-        return GiftEvalWrapperDataset(
-            datasets.load_dataset(
-                self.dataset_name,
-                split=self.split,
-                data_files=file_names
+        return ConcatDataset([
+            GiftEvalWrapperDataset(
+                datasets.load_dataset(
+                    self.dataset_name,
+                    split=self.split,
+                    data_files=[file_name]
+                )
             )
-        )
+            for file_name in file_names
+        ])
 
-    def __split_file_names(self, file_names):
-        half_length = len(file_names) // 2
-        return file_names[:half_length], file_names[half_length:]
+    def __split_file_names(self, file_names, num_chunks):
+        """
+        Splits file_names into num_chunks as equally as possible.
+        Returns a list of lists, each containing a chunk of file names.
+        """
+        if num_chunks < 1:
+            raise ValueError("num_chunks must be at least 1")
+        chunk_size = (len(file_names) + num_chunks - 1) // num_chunks  # ceil division
+        return [file_names[i * chunk_size : (i + 1) * chunk_size] for i in range(num_chunks)]
 
     def __get_worker_file_names(self, worker_id, num_workers):
         if num_workers == 1:
@@ -97,8 +108,8 @@ class PostProcessingDataset(IterableDataset):
         worker_info = get_worker_info()
         
         ds = self.__build_worker_dataset(
-            worker_info.id, worker_info.num_workers
-        ) if worker_info is not None else self.__build_worker_dataset(0, 1)
+            worker_info.id, worker_info.num_workers, self.parallel_file_count
+        ) if worker_info is not None else self.__build_worker_dataset(0, 1, self.parallel_file_count)
         
         for item in iter(ds):
             yield item
