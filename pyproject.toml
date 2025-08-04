@@ -13,6 +13,9 @@ matplotlib = "^3.10.3"
 notebook = "^7.4.4"
 ipywidgets = "^8.1.7"
 torch = "^2.1.0"
+huggingface-hub = ">=0.20.3"
+ts-preprocessing = {git = "https://github.com/TimeBinFM/data.git"}
+datasets = "^4.0.0"
 
 [build-system]
 requires = ["poetry-core"]
