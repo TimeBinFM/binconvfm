@@ -1,7 +1,7 @@
 import pytest
 import torch
 from torch import Tensor
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DataLoader
 from binconvfm import models as _models
 from inspect import getmembers, isclass
 from binconvfm.models.base import BaseForecaster, BaseLightningModule
@@ -32,7 +32,11 @@ class DummyDataset(Dataset):
 class TestOnDummyDataset:
     def setup_class(self):
         self.horizon = 5
-        self.ds = DummyDataset(output_len=self.horizon)
+        ds = DummyDataset(output_len=self.horizon)
+        self.train_dataloader = DataLoader(ds, batch_size=32, shuffle=True)
+        self.val_dataloader = DataLoader(ds, batch_size=32, shuffle=False)
+        self.test_dataloader = DataLoader(ds, batch_size=32, shuffle=False)
+        self.pred_dataloader = DataLoader(ds, batch_size=32, shuffle=False)
 
     @pytest.mark.parametrize("ModelClass", model_classes)
     def test_init(self, ModelClass):
@@ -51,18 +55,18 @@ class TestOnDummyDataset:
     @pytest.mark.parametrize("ModelClass", model_classes)
     def test_fit(self, ModelClass):
         self.model = ModelClass(horizon=self.horizon)
-        self.model.fit(self.ds, self.ds)
+        self.model.fit(self.train_dataloader, self.val_dataloader)
 
     @pytest.mark.parametrize("ModelClass", model_classes)
     def test_evaluate(self, ModelClass):
         self.model = ModelClass(horizon=self.horizon)
-        self.model.fit(self.ds, self.ds)
-        result = self.model.evaluate(self.ds)
+        self.model.fit(self.train_dataloader, self.val_dataloader)
+        result = self.model.evaluate(self.test_dataloader)
         assert result is not None
 
     @pytest.mark.parametrize("ModelClass", model_classes)
     def test_predict(self, ModelClass):
         self.model = ModelClass(horizon=self.horizon)
-        self.model.fit(self.ds, self.ds)
-        preds = self.model.predict(self.ds)
+        self.model.fit(self.train_dataloader, self.val_dataloader)
+        preds = self.model.predict(self.pred_dataloader)
         assert preds is not None
