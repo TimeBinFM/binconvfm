@@ -31,7 +31,7 @@ class BaseForecaster:
         if logging:
             self.logger = CSVLogger(save_dir="logs")
         self.log_every_n_steps = log_every_n_steps
-        self._create_trainer()
+        self.trainer = None
         self.model = None
 
     @abstractmethod
@@ -44,7 +44,7 @@ class BaseForecaster:
             self.model.horizon = horizon
 
     def set_n_samples(self, n_samples):
-        self.horn_samplesizon = n_samples
+        self.n_samples = n_samples
         if self.n_samples is not None:
             self.model.n_samples = n_samples
 
@@ -67,9 +67,17 @@ class BaseForecaster:
         )
 
     def evaluate(self, test_dataloader):
+        if self.trainer is None:
+            self._create_trainer()
+        if self.model is None:
+            self._create_model()
         return self.trainer.test(self.model, test_dataloader)
 
     def predict(self, pred_dataloader):
+        if self.trainer is None:
+            self._create_trainer()
+        if self.model is None:
+            self._create_model()
         pred = self.trainer.predict(
             self.model,
             dataloaders=pred_dataloader,
