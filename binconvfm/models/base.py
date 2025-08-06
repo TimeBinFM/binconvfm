@@ -1,7 +1,5 @@
 from pytorch_lightning import Trainer
 from pytorch_lightning.loggers import CSVLogger
-import torch
-from torch.utils.data import DataLoader
 from pytorch_lightning import LightningModule
 from binconvfm.utils.metrics import mase, crps
 from abc import abstractmethod
@@ -19,6 +17,7 @@ class BaseForecaster:
         accelerator: str = "cpu",
         enable_progress_bar: bool = True,
         logging: bool = False,
+        log_every_n_steps: int = 10,
     ):
         self.horizon = horizon
         self.n_samples = n_samples
@@ -28,7 +27,11 @@ class BaseForecaster:
         self.lr = lr
         self.accelerator = accelerator
         self.enable_progress_bar = enable_progress_bar
-        self.logging = logging
+        self.logger = False
+        if logging:
+            self.logger = CSVLogger(save_dir="logs")
+        self.log_every_n_steps = log_every_n_steps
+        self._create_trainer()
         self.model = None
 
     @abstractmethod
@@ -45,31 +48,17 @@ class BaseForecaster:
         if self.n_samples is not None:
             self.model.n_samples = n_samples
 
-    def _create_trainer(self, len_dataloader):
-        logger = False
-        if self.logging:
-            logger = CSVLogger(save_dir="logs")
+    def _create_trainer(self):
         self.trainer = Trainer(
             enable_progress_bar=self.enable_progress_bar,
             max_epochs=self.num_epochs,
-            log_every_n_steps=int(len_dataloader * 0.1),
-            logger=logger,
+            log_every_n_steps=self.log_every_n_steps,
+            logger=self.logger,
             accelerator=self.accelerator,
         )
 
-    def fit(self, train_dataset, val_dataset=None):
-        train_dataloader = DataLoader(
-            train_dataset,
-            batch_size=self.batch_size,
-            shuffle=True,
-        )
-        if val_dataset:
-            val_dataloader = DataLoader(
-                val_dataset,
-                batch_size=self.batch_size,
-                shuffle=False,
-            )
-        self._create_trainer(len(train_dataloader))
+    def fit(self, train_dataloader, val_dataloader=None):
+        self._create_trainer()
         self._create_model()
         self.trainer.fit(
             model=self.model,
@@ -77,27 +66,15 @@ class BaseForecaster:
             val_dataloaders=val_dataloader,
         )
 
-    def evaluate(self, test_dataset):
-        test_dataloader = DataLoader(
-            test_dataset,
-            batch_size=self.batch_size,
-            shuffle=False,
-        )
-        self._create_trainer(len(test_dataloader))
+    def evaluate(self, test_dataloader):
         return self.trainer.test(self.model, test_dataloader)
 
-    def predict(self, pred_dataset):
-        pred_dataloader = DataLoader(
-            pred_dataset,
-            batch_size=self.batch_size,
-            shuffle=False,
-        )
-        self._create_trainer(len(pred_dataloader))
+    def predict(self, pred_dataloader):
         pred = self.trainer.predict(
             self.model,
             dataloaders=pred_dataloader,
         )
-        return torch.cat(pred)
+        return pred
 
 
 class BaseLightningModule(LightningModule):
