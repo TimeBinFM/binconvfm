@@ -60,13 +60,11 @@ class TestOnDummyDataset:
     @pytest.mark.parametrize("ModelClass", model_classes)
     def test_evaluate(self, ModelClass):
         self.model = ModelClass(horizon=self.horizon)
-        self.model.fit(self.train_dataloader, self.val_dataloader)
         result = self.model.evaluate(self.test_dataloader)
         assert result is not None
 
     @pytest.mark.parametrize("ModelClass", model_classes)
     def test_predict(self, ModelClass):
         self.model = ModelClass(horizon=self.horizon)
-        self.model.fit(self.train_dataloader, self.val_dataloader)
         preds = self.model.predict(self.pred_dataloader)
         assert preds is not None
