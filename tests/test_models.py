@@ -1,11 +1,9 @@
 import pytest
 import torch
-from torch import Tensor
 from torch.utils.data import Dataset, DataLoader
 from binconvfm import models as _models
 from inspect import getmembers, isclass
-from binconvfm.models.base import BaseForecaster, BaseLightningModule
-import torch.nn as nn
+from binconvfm.models.base import BaseForecaster, BaseLightningModule, BaseTorchModule
 
 # Collect all model classes from __init__.py
 model_classes = [f[1] for f in getmembers(_models, isclass)]
@@ -15,7 +13,7 @@ class DummyDataset(Dataset):
     def __init__(self, input_len=20, output_len=5):
         self.input_len = input_len
         self.output_len = output_len
-        self.seq = torch.randn(1000, dtype=torch.float32)
+        self.seq = torch.randn((1000, 1), dtype=torch.float32)
         self.length = len(self.seq) - input_len - output_len + 1
 
     def __len__(self):
@@ -49,8 +47,8 @@ class TestOnDummyDataset:
             self.model.model, BaseLightningModule
         ), f"{self.model.model} is not a BaseForecasterModule"
         assert isinstance(
-            self.model.model.model, nn.Module
-        ), f"{self.model.model.model} is not a nn.Module"
+            self.model.model.model, BaseTorchModule
+        ), f"{self.model.model.model} is not a BaseTorchModule"
 
     @pytest.mark.parametrize("ModelClass", model_classes)
     def test_fit(self, ModelClass):

@@ -1,10 +1,9 @@
 import torch
-from torch import Tensor
 import torch.nn as nn
 from torch.optim import Adam
 from torch.optim import Optimizer
 import torch.nn.functional as F
-from binconvfm.models.base import BaseForecaster, BaseLightningModule
+from binconvfm.models.base import BaseForecaster, BaseLightningModule, BaseTorchModule
 
 
 class LSTMForecaster(BaseForecaster):
@@ -113,7 +112,7 @@ class LSTMModule(BaseLightningModule):
         return loss
 
 
-class LSTM(nn.Module):
+class LSTM(BaseTorchModule):
     def __init__(self, hidden_dim, n_layers):
         """
         Initialize the LSTM model for sequence forecasting.
@@ -127,24 +126,30 @@ class LSTM(nn.Module):
         self.lstm = nn.LSTM(1, hidden_dim, n_layers, batch_first=True)
         self.out_proj = nn.Linear(hidden_dim, 1)
 
-    def forward(self, x, horizon, n_samples, y=None):
+    def _forward(self, x, horizon, n_samples, y=None):
         """
         Vectorized forward pass for the LSTM model with random sampling.
 
         Args:
-            x (Tensor): Input sequence of shape (batch, input_len).
+            x (Tensor): Input sequence of shape (batch, input_len, dim=1).
             horizon (int): Forecasting horizon (length of output sequence).
             n_samples (int): Number of samples to generate.
-            y (Tensor, optional): Teacher-forced target sequence (batch, output_len).
+            y (Tensor, optional): Teacher-forced target sequence (batch, output_len, dim=1).
 
         Returns:
-            Tensor: Forecast samples of shape (batch, n_samples, output_len).
+            Tensor: Forecast samples of shape (batch, n_samples, horizon, dim=1).
         """
-        batch_size = int(x.size(0))
+        assert (
+            x.shape[2] == 1
+        ), "Input sequence must have a single feature dimension (dim=1)"
+        assert (
+            y.shape[2] == 1 if y is not None else True
+        ), "Target sequence must have a single feature dimension (dim=1)"
+
+        batch_size = x.size(0)
         device = x.device
 
-        # Prepare encoder input
-        x = x.unsqueeze(-1)  # (batch, input_len, 1)
+        # Encode input sequence
         _, (h, c) = self.lstm(x)  # h, c: (num_layers, batch, hidden_size)
 
         # Expand hidden and cell states for n_samples
@@ -166,12 +171,11 @@ class LSTM(nn.Module):
                 input, (h, c)
             )  # (batch * n_samples, 1, hidden_size)
             pred = self.out_proj(out)  # (batch * n_samples, 1, 1)
-            outputs.append(pred.squeeze(-1))  # (batch * n_samples, 1)
+            outputs.append(pred)  # (batch * n_samples, 1, 1)
 
             if self.training and y is not None:
                 # Use teacher forcing: repeat y for n_samples
-                next_input = y[:, t : t + 1]  # (batch, 1)
-                next_input = next_input.unsqueeze(1)  # (batch, 1, 1)
+                next_input = y[:, t : t + 1, :]  # (batch, 1, 1)
                 next_input = next_input.expand(
                     batch_size, n_samples, 1
                 )  # (batch, n_samples, 1)
@@ -182,8 +186,8 @@ class LSTM(nn.Module):
             else:
                 input = pred  # use prediction as next input
 
-        outputs = torch.cat(outputs, dim=1)  # (batch * n_samples, horizon)
+        outputs = torch.cat(outputs, dim=1)  # (batch * n_samples, horizon, 1)
         outputs = outputs.view(
-            batch_size, n_samples, horizon
-        )  # (batch, n_samples, horizon)
+            batch_size, n_samples, horizon, 1
+        )  # (batch, n_samples, horizon, 1)
         return outputs
