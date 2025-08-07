@@ -72,18 +72,15 @@ class BaseForecaster:
             self._create_trainer()
         if self.model is None:
             self._create_model()
-        return self.trainer.test(self.model, test_dataloader)
+        metrics = self.trainer.test(self.model, test_dataloader)
+        return metrics[0] # Assuming single test dataloader and single result
 
     def predict(self, pred_dataloader):
         if self.trainer is None:
             self._create_trainer()
         if self.model is None:
             self._create_model()
-        pred = self.trainer.predict(
-            self.model,
-            dataloaders=pred_dataloader,
-        )
-        return pred
+        return self.trainer.predict(self.model, pred_dataloader)
 
 
 class BaseLightningModule(LightningModule):
