@@ -1,6 +1,7 @@
 from pytorch_lightning import Trainer
 from pytorch_lightning.loggers import CSVLogger
 from pytorch_lightning import LightningModule
+import torch.nn as nn
 from binconvfm.utils.metrics import mase, crps
 from abc import abstractmethod
 
@@ -126,3 +127,55 @@ class BaseLightningModule(LightningModule):
     def predict_step(self, batch, batch_idx):
         input_seq, _ = batch
         return self.model(input_seq, self.horizon, self.n_samples)
+    
+    @abstractmethod
+    def loss(self, batch, batch_idx):
+        """
+        Compute the loss for a batch.
+
+        Args:
+            batch (Tensor): Tuple of (input_seq, target_seq).
+            batch_idx (int): Index of the batch.
+
+        Returns:
+            Tensor: Loss value.
+        """
+        raise NotImplementedError("Subclasses must implement this method")
+
+
+class BaseTorchModule(nn.Module):
+    def forward(self, x, horizon, n_samples, y=None):
+        """
+        Vectorized forward pass for the LSTM model with random sampling.
+
+        Args:
+            x (Tensor): Input sequence of shape (batch, input_len, dim).
+            horizon (int): Forecasting horizon (length of output sequence).
+            n_samples (int): Number of samples to generate.
+            y (Tensor, optional): Teacher-forced target sequence (batch, output_len, dim).
+
+        Returns:
+            Tensor: Forecast samples of shape (batch, n_samples, output_len, dim).
+        """
+        assert x.dim() == 3, "Input must be a 3D tensor (batch, input_len, dim)"
+        assert (
+            y is None or y.dim() == 3
+        ), "Target must be a 3D tensor (batch, output_len, dim) if provided"
+        return self._forward(x, horizon, n_samples, y)
+    
+    @abstractmethod
+    def _forward(self, x, horizon, n_samples, y=None):
+        """
+        Abstract method to be implemented by subclasses for the forward pass.
+
+        Args:
+            x (Tensor): Input sequence.
+            horizon (int): Forecasting horizon.
+            n_samples (int): Number of samples to generate.
+            y (Tensor, optional): Teacher-forced target sequence.
+
+        Returns:
+            Tensor: Output of the model.
+        """
+        raise NotImplementedError("Subclasses must implement this method")
+
