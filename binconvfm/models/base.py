@@ -4,6 +4,7 @@ from pytorch_lightning import LightningModule
 import torch.nn as nn
 from binconvfm.utils.metrics import mase, crps
 from abc import abstractmethod
+from binconvfm.transforms import BaseTransform, IdentityTransform
 
 
 class BaseForecaster:
@@ -19,6 +20,7 @@ class BaseForecaster:
         enable_progress_bar: bool = True,
         logging: bool = False,
         log_every_n_steps: int = 10,
+        transform: BaseTransform = IdentityTransform(),
     ):
         self.horizon = horizon
         self.n_samples = n_samples
@@ -32,6 +34,7 @@ class BaseForecaster:
         if logging:
             self.logger = CSVLogger(save_dir="logs")
         self.log_every_n_steps = log_every_n_steps
+        self.transform = transform
         self.trainer = None
         self.model = None
 
@@ -73,7 +76,7 @@ class BaseForecaster:
         if self.model is None:
             self._create_model()
         metrics = self.trainer.test(self.model, test_dataloader)
-        return metrics[0] # Assuming single test dataloader and single result
+        return metrics[0]  # Assuming single test dataloader and single result
 
     def predict(self, pred_dataloader):
         if self.trainer is None:
@@ -84,7 +87,7 @@ class BaseForecaster:
 
 
 class BaseLightningModule(LightningModule):
-    def __init__(self, horizon, n_samples, quantiles, lr):
+    def __init__(self, horizon, n_samples, quantiles, lr, transform):
         """
         PyTorch Lightning module for LSTM forecasting.
 
@@ -99,22 +102,31 @@ class BaseLightningModule(LightningModule):
         self.n_samples = n_samples
         self.quantiles = quantiles
         self.lr = lr
+        self.transform = transform
 
     def training_step(self, batch, batch_idx):
-        loss = self.loss(batch, batch_idx)
+        input_seq, target_seq = batch
+        input_seq = self.transform.fit_transform(input_seq)
+        target_seq = self.transform.fit_transform(target_seq)
+        loss = self.loss(input_seq, target_seq, batch_idx)
         self.log("train_loss", loss, prog_bar=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
-        loss = self.loss(batch, batch_idx)
+        input_seq, target_seq = batch
+        input_seq = self.transform.fit_transform(input_seq)
+        target_seq = self.transform.fit_transform(target_seq)
+        loss = self.loss(input_seq, target_seq, batch_idx)
         self.log("val_loss", loss, prog_bar=True)
         return loss
 
     def test_step(self, batch, batch_idx):
         input_seq, target_seq = batch
+        input_seq = self.transform.fit_transform(input_seq)
         pred_seq = self.model(
             input_seq, self.horizon, self.n_samples
-        )  # (batch, n_samples, output_len)
+        )
+        pred_seq = self.transform.inverse_transform(pred_seq)
         metrics = {
             "mase": mase(pred_seq, target_seq),
             "crps": crps(pred_seq, target_seq, self.quantiles),
@@ -123,19 +135,23 @@ class BaseLightningModule(LightningModule):
 
     def predict_step(self, batch, batch_idx):
         input_seq, _ = batch
-        return self.model(input_seq, self.horizon, self.n_samples)
-    
+        input_seq = self.transform.fit_transform(input_seq)
+        pred_seq = self.model(input_seq, self.horizon, self.n_samples)
+        pred_seq = self.transform.inverse_transform(pred_seq)
+        return pred_seq
+
     @abstractmethod
-    def loss(self, batch, batch_idx):
+    def loss(self, input_seq, target_seq, batch_idx):
         """
         Compute the loss for a batch.
 
         Args:
-            batch (Tensor): Tuple of (input_seq, target_seq).
+            input_seq (Tensor): The input sequence tensor for the batch.
+            target_seq (Tensor): The target sequence tensor for the batch.
             batch_idx (int): Index of the batch.
 
         Returns:
-            Tensor: Loss value.
+            Tensor: Computed loss value for the batch.
         """
         raise NotImplementedError("Subclasses must implement this method")
 
@@ -159,7 +175,7 @@ class BaseTorchModule(nn.Module):
             y is None or y.dim() == 3
         ), "Target must be a 3D tensor (batch, output_len, dim) if provided"
         return self._forward(x, horizon, n_samples, y)
-    
+
     @abstractmethod
     def _forward(self, x, horizon, n_samples, y=None):
         """
@@ -175,4 +191,3 @@ class BaseTorchModule(nn.Module):
             Tensor: Output of the model.
         """
         raise NotImplementedError("Subclasses must implement this method")
-
