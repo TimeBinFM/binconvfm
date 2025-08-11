@@ -22,6 +22,22 @@ class BaseForecaster:
         log_every_n_steps: int = 10,
         transform: str = "identity",
     ):
+        """
+        Initializes the base model with the specified configuration.
+
+        Args:
+            horizon (int, optional): Forecast horizon. Defaults to 1.
+            n_samples (int, optional): Number of samples for probabilistic forecasting. Defaults to 1000.
+            quantiles (list[float], optional): List of quantiles to predict. Defaults to [(i + 1) / 10 for i in range(9)].
+            batch_size (int, optional): Batch size for training. Defaults to 32.
+            num_epochs (int, optional): Number of training epochs. Defaults to 10.
+            lr (float, optional): Learning rate. Defaults to 0.001.
+            accelerator (str, optional): Device to use for training ('cpu', 'gpu', etc.). Defaults to "cpu".
+            enable_progress_bar (bool, optional): Whether to display a progress bar during training. Defaults to True.
+            logging (bool, optional): Whether to enable logging. Defaults to False.
+            log_every_n_steps (int, optional): Frequency of logging steps. Defaults to 10.
+            transform (str, optional): Data transformation to apply. Defaults to "identity".
+        """
         self.horizon = horizon
         self.n_samples = n_samples
         self.quantiles = quantiles
@@ -89,12 +105,16 @@ class BaseForecaster:
 class BaseLightningModule(LightningModule):
     def __init__(self, horizon, n_samples, quantiles, lr, transform):
         """
-        PyTorch Lightning module for LSTM forecasting.
+        Initializes the forecasting model with specified parameters.
 
-        Args:
-            hidden_dim (int): Hidden dimension of LSTM.
-            n_layers (int): Number of LSTM layers.
-            lr (float): Learning rate.
+            horizon (int): The forecasting horizon, i.e., number of future time steps to predict.
+            n_samples (int): Number of samples to generate for probabilistic forecasting.
+            quantiles (list or tuple): List of quantiles to predict (e.g., [0.1, 0.5, 0.9]).
+            lr (float): Learning rate for the optimizer.
+            transform (str): Data transformation to apply. Must be either "identity" or "standard_scaler".
+
+        Raises:
+            ValueError: If an unknown transform is provided.
         """
         super().__init__()
         self.save_hyperparameters()
