@@ -112,7 +112,7 @@ class BaseLightningModule(LightningModule):
     def training_step(self, batch, batch_idx):
         input_seq, target_seq = batch
         input_seq = self.transform.fit_transform(input_seq)
-        target_seq = self.transform.fit_transform(target_seq)
+        target_seq = self.transform.transform(target_seq)
         loss = self.loss(input_seq, target_seq, batch_idx)
         self.log("train_loss", loss, prog_bar=True)
         return loss
@@ -120,7 +120,7 @@ class BaseLightningModule(LightningModule):
     def validation_step(self, batch, batch_idx):
         input_seq, target_seq = batch
         input_seq = self.transform.fit_transform(input_seq)
-        target_seq = self.transform.fit_transform(target_seq)
+        target_seq = self.transform.transform(target_seq)
         loss = self.loss(input_seq, target_seq, batch_idx)
         self.log("val_loss", loss, prog_bar=True)
         return loss
