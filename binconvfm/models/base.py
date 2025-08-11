@@ -4,7 +4,7 @@ from pytorch_lightning import LightningModule
 import torch.nn as nn
 from binconvfm.utils.metrics import mase, crps
 from abc import abstractmethod
-from binconvfm.transforms import BaseTransform, IdentityTransform, StandardScaler
+from binconvfm.transforms import IdentityTransform, StandardScaler
 
 
 class BaseForecaster:
@@ -128,9 +128,7 @@ class BaseLightningModule(LightningModule):
     def test_step(self, batch, batch_idx):
         input_seq, target_seq = batch
         input_seq = self.transform.fit_transform(input_seq)
-        pred_seq = self.model(
-            input_seq, self.horizon, self.n_samples
-        )
+        pred_seq = self.model(input_seq, self.horizon, self.n_samples)
         pred_seq = self.transform.inverse_transform(pred_seq)
         metrics = {
             "mase": mase(pred_seq, target_seq),
