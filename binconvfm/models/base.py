@@ -34,12 +34,7 @@ class BaseForecaster:
         if logging:
             self.logger = CSVLogger(save_dir="logs")
         self.log_every_n_steps = log_every_n_steps
-        if transform == "identity":
-            self.transform = IdentityTransform()
-        elif transform == "standard_scaler":
-            self.transform = StandardScaler()
-        else:
-            raise ValueError(f"Unknown transform: {transform}")
+        self.transform = transform
         self.trainer = None
         self.model = None
 
@@ -107,7 +102,12 @@ class BaseLightningModule(LightningModule):
         self.n_samples = n_samples
         self.quantiles = quantiles
         self.lr = lr
-        self.transform = transform
+        if transform == "identity":
+            self.transform = IdentityTransform()
+        elif transform == "standard_scaler":
+            self.transform = StandardScaler()
+        else:
+            raise ValueError(f"Unknown transform: {transform}")
 
     def training_step(self, batch, batch_idx):
         input_seq, target_seq = batch
