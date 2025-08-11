@@ -22,7 +22,7 @@ class LSTMForecaster(BaseForecaster):
         enable_progress_bar: bool = True,
         logging: bool = False,
         log_every_n_steps: int = 10,
-        transform: BaseTransform = IdentityTransform(),
+        transform: str = "identity",
     ):
         """
         Initialize the LSTMForecaster.

@@ -4,7 +4,7 @@ from pytorch_lightning import LightningModule
 import torch.nn as nn
 from binconvfm.utils.metrics import mase, crps
 from abc import abstractmethod
-from binconvfm.transforms import BaseTransform, IdentityTransform
+from binconvfm.transforms import BaseTransform, IdentityTransform, StandardScaler
 
 
 class BaseForecaster:
@@ -20,7 +20,7 @@ class BaseForecaster:
         enable_progress_bar: bool = True,
         logging: bool = False,
         log_every_n_steps: int = 10,
-        transform: BaseTransform = IdentityTransform(),
+        transform: str = "identity",
     ):
         self.horizon = horizon
         self.n_samples = n_samples
@@ -34,7 +34,12 @@ class BaseForecaster:
         if logging:
             self.logger = CSVLogger(save_dir="logs")
         self.log_every_n_steps = log_every_n_steps
-        self.transform = transform
+        if transform == "identity":
+            self.transform = IdentityTransform()
+        elif transform == "standard_scaler":
+            self.transform = StandardScaler()
+        else:
+            raise ValueError(f"Unknown transform: {transform}")
         self.trainer = None
         self.model = None
 

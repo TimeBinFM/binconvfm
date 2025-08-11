@@ -4,6 +4,7 @@ from torch.utils.data import Dataset, DataLoader
 from binconvfm import models as _models
 from inspect import getmembers, isclass
 from binconvfm.models.base import BaseForecaster, BaseLightningModule, BaseTorchModule
+from binconvfm.models.lstm import LSTMForecaster
 
 # Collect all model classes from __init__.py
 model_classes = [f[1] for f in getmembers(_models, isclass)]
@@ -81,3 +82,9 @@ class TestOnDummyDataset:
                 self.horizon,
                 1,
             ), "Each prediction should have shape (batch_size, n_samples, horizon, dim)"
+
+    def test_standard_scaler(self):
+        self.model = LSTMForecaster(horizon=self.horizon, transform="standard_scaler")
+        self.model.fit(self.train_dataloader, self.val_dataloader)
+        self.model.evaluate(self.test_dataloader)
+        assert True, "Model should evaluate without errors"

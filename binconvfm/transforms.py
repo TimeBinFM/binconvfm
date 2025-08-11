@@ -45,3 +45,22 @@ class IdentityTransform(BaseTransform):
 
     def inverse_transform(self, data):
         return data
+
+
+class StandardScaler(BaseTransform):
+    def __init__(self):
+        self.mean = None
+        self.std = None
+
+    def fit_transform(self, data):
+        self.mean = data.mean(dim=1, keepdim=True)
+        self.std = data.std(dim=1, keepdim=True)
+        return (data - self.mean) / self.std
+
+    def transform(self, data):
+        return (data - self.mean) / self.std
+
+    def inverse_transform(self, data):
+        std = self.std.unsqueeze(1)
+        mean = self.mean.unsqueeze(1)
+        return data * std + mean
