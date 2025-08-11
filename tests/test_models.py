@@ -85,6 +85,11 @@ class TestOnDummyDataset:
 
     def test_standard_scaler(self):
         self.model = LSTMForecaster(horizon=self.horizon, transform="standard_scaler")
+        self.model._create_model()
+        assert self.model.model.transform.mean is None
+        assert self.model.model.transform.std is None, "Scaler should not have mean/std before fitting"
         self.model.fit(self.train_dataloader, self.val_dataloader)
+        assert self.model.model.transform.mean.shape == (16, 1, 1)
+        assert self.model.model.transform.std.shape == (16, 1, 1)
         self.model.evaluate(self.test_dataloader)
         assert True, "Model should evaluate without errors"
