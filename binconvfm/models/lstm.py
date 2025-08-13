@@ -4,14 +4,13 @@ from torch.optim import Adam
 from torch.optim import Optimizer
 import torch.nn.functional as F
 from binconvfm.models.base import BaseForecaster, BaseLightningModule, BaseTorchModule
-from binconvfm.transforms import BaseTransform, IdentityTransform
+from typing import List
 
 
 class LSTMForecaster(BaseForecaster):
     def __init__(
         self,
-        hidden_dim: int = 64,
-        n_layers: int = 1,
+        # Common parameters - explicit
         horizon: int = 1,
         n_samples: int = 1000,
         quantiles: list[float] = [(i + 1) / 10 for i in range(9)],
@@ -22,7 +21,9 @@ class LSTMForecaster(BaseForecaster):
         enable_progress_bar: bool = True,
         logging: bool = False,
         log_every_n_steps: int = 10,
-        transform: str = "identity",
+        transform: List[str] = None,
+        # LSTM-specific parameters - go to kwargs
+        **model_kwargs
     ):
         """
         Initialize the LSTMForecaster.
@@ -40,39 +41,52 @@ class LSTMForecaster(BaseForecaster):
             enable_progress_bar (bool): Whether to show progress bar.
             logging (bool): Enable logging.
         """
+        if transform is None:
+            transform = ['IdentityTransform']
+            
+        # Set default values for LSTM-specific parameters if not provided
+        lstm_defaults = {
+            'hidden_dim': 64,
+            'n_layers': 1,
+        }
+        
+        # Update defaults with provided kwargs
+        for key, default_value in lstm_defaults.items():
+            if key not in model_kwargs:
+                model_kwargs[key] = default_value
+                
         super().__init__(
-            horizon,
-            n_samples,
-            quantiles,
-            batch_size,
-            num_epochs,
-            lr,
-            accelerator,
-            enable_progress_bar,
-            logging,
-            log_every_n_steps,
-            transform,
+            horizon=horizon,
+            n_samples=n_samples,
+            quantiles=quantiles,
+            batch_size=batch_size,
+            num_epochs=num_epochs,
+            lr=lr,
+            accelerator=accelerator,
+            enable_progress_bar=enable_progress_bar,
+            logging=logging,
+            log_every_n_steps=log_every_n_steps,
+            transform=transform,
+            **model_kwargs  # Pass LSTM-specific parameters
         )
-        self.hidden_dim = hidden_dim
-        self.n_layers = n_layers
 
     def _create_model(self):
         """
         Create and assign the LSTMModule model to this forecaster.
         """
         self.model = LSTMModule(
-            self.hidden_dim,
-            self.n_layers,
-            self.horizon,
-            self.n_samples,
-            self.quantiles,
-            self.lr,
-            self.transform
+            horizon=self.horizon,
+            n_samples=self.n_samples,
+            quantiles=self.quantiles,
+            lr=self.lr,
+            transform=self.transform,
+            hidden_dim=self.model_kwargs['hidden_dim'],
+            n_layers=self.model_kwargs['n_layers'],
         )
 
 
 class LSTMModule(BaseLightningModule):
-    def __init__(self, hidden_dim, n_layers, horizon, n_samples, quantiles, lr, transform):
+    def __init__(self, horizon: int, n_samples: int, quantiles: List[float], lr: float, transform: List[str], hidden_dim: int, n_layers: int):
         """
         Initialize the LSTMModule for PyTorch Lightning training.
 
@@ -98,7 +112,7 @@ class LSTMModule(BaseLightningModule):
         optimizer = Adam(self.model.parameters(), lr=self.lr)
         return optimizer
 
-    def loss(self, input_seq, target_seq, batch_idx):
+    def loss(self, input_seq: torch.Tensor, target_seq: torch.Tensor, batch_idx: int) -> torch.Tensor:
         """
         Compute the mean squared error (MSE) loss between the predicted and target sequences for a batch.
 
@@ -118,7 +132,7 @@ class LSTMModule(BaseLightningModule):
 
 
 class LSTM(BaseTorchModule):
-    def __init__(self, hidden_dim, n_layers):
+    def __init__(self, hidden_dim: int = 64, n_layers: int = 1):
         """
         Initialize the LSTM model for sequence forecasting.
 
@@ -131,7 +145,7 @@ class LSTM(BaseTorchModule):
         self.lstm = nn.LSTM(1, hidden_dim, n_layers, batch_first=True)
         self.out_proj = nn.Linear(hidden_dim, 1)
 
-    def _forward(self, x, horizon, n_samples, y=None):
+    def _forward(self, x: torch.Tensor, horizon: int, n_samples: int, y: torch.Tensor = None) -> torch.Tensor:
         """
         Vectorized forward pass for the LSTM model with random sampling.
 

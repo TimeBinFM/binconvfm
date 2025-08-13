@@ -10,51 +10,48 @@ import torch
 import numpy as np
 from typing import Dict, List
 
-from binconvfm.utils.processing import (
+from binconvfm.transform import (
     BaseTransform,
+    IdentityTransform,
     StandardScaler,
     TemporalScaler,
     BinaryQuantizer,
-    TransformPipeline
+    Pipeline
 )
+from binconvfm.transform.factory import TransformFactory
 
 
-class TestBaseTransform:
-    """Test the base transformation class."""
+class TestTransformFactory:
+    """Test the TransformFactory class."""
     
-    def test_base_transform_initialization(self):
-        """Test that BaseTransform initializes correctly."""
-        transform = BaseTransform()
-        assert transform.input_dims is None
-        assert transform.inverse_input_dims is None
+    def test_create_pipeline_identity(self):
+        """Test creating pipeline with IdentityTransform."""
+        pipeline = TransformFactory.create_pipeline(['IdentityTransform'])
+        
+        assert len(pipeline.steps) == 1
+        assert pipeline.steps[0][0] == 'IdentityTransform'
+        assert isinstance(pipeline.steps[0][1], IdentityTransform)
     
-    def test_shape_validation_error(self):
-        """Test that shape validation raises appropriate errors."""
-        transform = BaseTransform()
-        transform.input_dims = 3
+    def test_create_pipeline_multiple_transforms(self):
+        """Test creating pipeline with multiple transforms."""
+        pipeline = TransformFactory.create_pipeline(['StandardScaler', 'BinaryQuantizer'])
         
-        # Create 2D tensor when 3D expected
-        data = torch.randn(10, 5)
-        
-        with pytest.raises(ValueError, match="BaseTransform.transform"):
-            transform._validate_input_shape(data, 3, "transform")
+        assert len(pipeline.steps) == 2
+        assert isinstance(pipeline.steps[0][1], StandardScaler)
+        assert isinstance(pipeline.steps[1][1], BinaryQuantizer)
     
-    def test_fit_returns_self(self):
-        """Test that fit() returns self for method chaining."""
-        transform = BaseTransform()
-        data = torch.randn(2, 10, 3)
-        assert transform.fit(data) is transform
+    def test_unknown_transform_error(self):
+        """Test that unknown transform names raise ValueError."""
+        with pytest.raises(ValueError, match="Unknown transform"):
+            TransformFactory.create_pipeline(['UnknownTransform'])
     
-    def test_not_implemented_methods(self):
-        """Test that abstract methods raise NotImplementedError."""
-        transform = BaseTransform()
-        data = torch.randn(2, 10, 3)
+    def test_get_available_transforms(self):
+        """Test that available transforms are listed."""
+        available = TransformFactory.get_available_transforms()
         
-        with pytest.raises(NotImplementedError):
-            transform.transform(data)
-        
-        with pytest.raises(NotImplementedError):
-            transform.inverse_transform(data, {})
+        assert 'IdentityTransform' in available
+        assert 'StandardScaler' in available
+        assert 'BinaryQuantizer' in available
 
 
 class TestStandardScaler:
@@ -77,18 +74,18 @@ class TestStandardScaler:
     def test_initialization(self):
         """Test that StandardScaler initializes correctly."""
         assert self.scaler.input_dims == 3
-        assert self.scaler.inverse_input_dims == 3
+        assert self.scaler.inverse_input_dims is None  # Accepts both 3D and 4D tensors
     
     def test_shape_validation(self):
         """Test input shape validation."""
         # Test correct shape
-        transformed, params = self.scaler.transform(self.data)
+        transformed, params = self.scaler.fit_transform(self.data)
         assert transformed.shape == self.data.shape
         
         # Test incorrect shape
         wrong_shape_data = torch.randn(10, 5)  # 2D instead of 3D
-        with pytest.raises(ValueError, match="StandardScaler.transform"):
-            self.scaler.transform(wrong_shape_data)
+        with pytest.raises(ValueError, match="StandardScaler.fit"):
+            self.scaler.fit_transform(wrong_shape_data)
     
     def test_transform_statistics(self):
         """Test that transform produces correct standardization."""
@@ -113,7 +110,7 @@ class TestStandardScaler:
     def test_inverse_transform(self):
         """Test that inverse transform recovers original data."""
         transformed, params = self.scaler.transform(self.data)
-        reconstructed = self.scaler.inverse_transform(transformed, params)
+        reconstructed, _ = self.scaler.inverse_transform(transformed, params)
         
         # Should recover original data
         assert torch.allclose(reconstructed, self.data, atol=1e-6)
@@ -133,7 +130,7 @@ class TestStandardScaler:
         
         # Move transformed data to CPU but keep params on GPU
         transformed_cpu = transformed.cpu()
-        reconstructed = self.scaler.inverse_transform(transformed_cpu, params)
+        reconstructed, _ = self.scaler.inverse_transform(transformed_cpu, params)
         
         # Should work and result should be on CPU
         assert reconstructed.device.type == 'cpu'
@@ -193,7 +190,7 @@ class TestTemporalScaler:
     def test_inverse_transform(self):
         """Test that inverse transform recovers original data."""
         transformed, params = self.scaler.transform(self.data)
-        reconstructed = self.scaler.inverse_transform(transformed, params)
+        reconstructed, _ = self.scaler.inverse_transform(transformed, params)
         
         assert torch.allclose(reconstructed, self.data, atol=1e-6)
     
@@ -291,14 +288,14 @@ class TestBinaryQuantizer:
     def test_inverse_transform_shape(self):
         """Test that inverse transform produces correct shape."""
         transformed, params = self.quantizer.transform(self.data)
-        reconstructed = self.quantizer.inverse_transform(transformed, params)
+        reconstructed, _ = self.quantizer.inverse_transform(transformed, params)
         
         assert reconstructed.shape == self.data.shape
     
     def test_inverse_transform_range(self):
         """Test that inverse transform stays within expected range."""
         transformed, params = self.quantizer.transform(self.data)
-        reconstructed = self.quantizer.inverse_transform(transformed, params)
+        reconstructed, _ = self.quantizer.inverse_transform(transformed, params)
         
         # Reconstructed values should be within [min_val, max_val]
         assert (reconstructed >= self.min_val).all()
@@ -325,7 +322,7 @@ class TestTransformPipeline:
         self.scaler = StandardScaler()
         self.quantizer = BinaryQuantizer(num_bins=5, min_val=-3.0, max_val=3.0)
         
-        self.pipeline = TransformPipeline([
+        self.pipeline = Pipeline([
             ('scaler', self.scaler),
             ('quantizer', self.quantizer)
         ])
@@ -369,7 +366,7 @@ class TestTransformPipeline:
     def test_inverse_transform_sequence(self):
         """Test that pipeline applies inverse transforms in reverse order."""
         transformed, all_params = self.pipeline.transform(self.data)
-        reconstructed = self.pipeline.inverse_transform(transformed, all_params)
+        reconstructed, _ = self.pipeline.inverse_transform(transformed, all_params)
         
         # Should recover approximately original data
         # (some loss due to quantization)
@@ -383,11 +380,12 @@ class TestTransformPipeline:
     def test_fit_method(self):
         """Test that fit method works for compatibility."""
         result = self.pipeline.fit(self.data)
-        assert result is self.pipeline
+        assert isinstance(result, list)
+        assert len(result) == 2  # Two transforms in pipeline
     
     def test_empty_pipeline(self):
         """Test edge case of empty pipeline."""
-        empty_pipeline = TransformPipeline([])
+        empty_pipeline = Pipeline([])
         
         transformed, params = empty_pipeline.transform(self.data)
         
@@ -396,15 +394,15 @@ class TestTransformPipeline:
         assert params == []
         
         # Inverse should also return original data
-        reconstructed = empty_pipeline.inverse_transform(self.data, [])
+        reconstructed, _ = empty_pipeline.inverse_transform(self.data, [])
         assert torch.equal(reconstructed, self.data)
     
     def test_single_transform_pipeline(self):
         """Test pipeline with single transformation."""
-        single_pipeline = TransformPipeline([('scaler', StandardScaler())])
+        single_pipeline = Pipeline([('scaler', StandardScaler())])
         
         transformed, params = single_pipeline.transform(self.data)
-        reconstructed = single_pipeline.inverse_transform(transformed, params)
+        reconstructed, _ = single_pipeline.inverse_transform(transformed, params)
         
         # Should be exact reconstruction for StandardScaler
         assert torch.allclose(reconstructed, self.data, atol=1e-6)
@@ -422,7 +420,7 @@ class TestIntegration:
             
             scaler = StandardScaler()
             transformed, params = scaler.transform(data)
-            reconstructed = scaler.inverse_transform(transformed, params)
+            reconstructed, _ = scaler.inverse_transform(transformed, params)
             
             assert transformed.dtype == dtype
             assert reconstructed.dtype == dtype
@@ -457,19 +455,19 @@ class TestIntegration:
         single_batch = torch.randn(1, 10, 3)
         scaler = StandardScaler()
         transformed, params = scaler.transform(single_batch)
-        reconstructed = scaler.inverse_transform(transformed, params)
+        reconstructed, _ = scaler.inverse_transform(transformed, params)
         assert torch.allclose(reconstructed, single_batch, atol=1e-6)
         
         # Single feature
         single_feature = torch.randn(2, 10, 1)
         transformed, params = scaler.transform(single_feature)
-        reconstructed = scaler.inverse_transform(transformed, params)
+        reconstructed, _ = scaler.inverse_transform(transformed, params)
         assert torch.allclose(reconstructed, single_feature, atol=1e-6)
         
         # Minimum context length
         min_context = torch.randn(2, 1, 3)
         transformed, params = scaler.transform(min_context)
-        reconstructed = scaler.inverse_transform(transformed, params)
+        reconstructed, _ = scaler.inverse_transform(transformed, params)
         assert torch.allclose(reconstructed, min_context, atol=1e-6)
 
 

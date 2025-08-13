@@ -83,13 +83,21 @@ class TestOnDummyDataset:
                 1,
             ), "Each prediction should have shape (batch_size, n_samples, horizon, dim)"
 
-    def test_standard_scaler(self):
-        self.model = LSTMForecaster(horizon=self.horizon, transform="standard_scaler")
+    def test_transform_factory(self):
+        self.model = LSTMForecaster(horizon=self.horizon, transform=["StandardScaler"])
         self.model._create_model()
-        assert self.model.model.transform.mean is None
-        assert self.model.model.transform.std is None, "Scaler should not have mean/std before fitting"
+        # Transform should be a pipeline with StandardScaler
+        assert len(self.model.model.transform.steps) == 1
+        assert self.model.model.transform.steps[0][0] == "StandardScaler"
+        
+        # Create a sample batch to test transform
+        sample_data = torch.randn(self.batch_size, 20, 1)  # (batch, seq_len, features)
+        transformed, params = self.model.model.transform.fit_transform(sample_data)
+        
+        # Check that parameters have correct shapes (per-sample scaling)
+        assert params[0]['mean'].shape == (self.batch_size, 1, 1)
+        assert params[0]['std'].shape == (self.batch_size, 1, 1)
+        
         self.model.fit(self.train_dataloader, self.val_dataloader)
-        assert self.model.model.transform.mean.shape == (16, 1, 1)
-        assert self.model.model.transform.std.shape == (16, 1, 1)
         self.model.evaluate(self.test_dataloader)
         assert True, "Model should evaluate without errors"

@@ -4,7 +4,8 @@ from pytorch_lightning import LightningModule
 import torch.nn as nn
 from binconvfm.utils.metrics import mase, crps
 from abc import abstractmethod
-from binconvfm.transforms import IdentityTransform, StandardScaler
+from typing import List, Union
+from binconvfm.transform.factory import TransformFactory
 
 
 class BaseForecaster:
@@ -20,7 +21,8 @@ class BaseForecaster:
         enable_progress_bar: bool = True,
         logging: bool = False,
         log_every_n_steps: int = 10,
-        transform: str = "identity",
+        transform: List[str] = None,
+        **model_kwargs
     ):
         """
         Initializes the base model with the specified configuration.
@@ -36,7 +38,7 @@ class BaseForecaster:
             enable_progress_bar (bool, optional): Whether to display a progress bar during training. Defaults to True.
             logging (bool, optional): Whether to enable logging. Defaults to False.
             log_every_n_steps (int, optional): Frequency of logging steps. Defaults to 10.
-            transform (str, optional): Data transformation to apply. Defaults to "identity".
+            transform (List[str], optional): List of data transformations to apply. Defaults to ["identity"].
         """
         self.horizon = horizon
         self.n_samples = n_samples
@@ -50,7 +52,8 @@ class BaseForecaster:
         if logging:
             self.logger = CSVLogger(save_dir="logs")
         self.log_every_n_steps = log_every_n_steps
-        self.transform = transform
+        self.transform = transform if transform is not None else ["IdentityTransform"]
+        self.model_kwargs = model_kwargs  # Store model-specific parameters
         self.trainer = None
         self.model = None
 
@@ -58,17 +61,17 @@ class BaseForecaster:
     def _create_model(self):
         pass
 
-    def set_horizon(self, horizon):
+    def set_horizon(self, horizon: int) -> None:
         self.horizon = horizon
         if self.model is not None:
             self.model.horizon = horizon
 
-    def set_n_samples(self, n_samples):
+    def set_n_samples(self, n_samples: int) -> None:
         self.n_samples = n_samples
         if self.n_samples is not None:
             self.model.n_samples = n_samples
 
-    def _create_trainer(self):
+    def _create_trainer(self) -> None:
         self.trainer = Trainer(
             enable_progress_bar=self.enable_progress_bar,
             max_epochs=self.num_epochs,
@@ -77,7 +80,7 @@ class BaseForecaster:
             accelerator=self.accelerator,
         )
 
-    def fit(self, train_dataloader, val_dataloader=None):
+    def fit(self, train_dataloader, val_dataloader=None) -> None:
         self._create_trainer()
         self._create_model()
         self.trainer.fit(
@@ -103,7 +106,7 @@ class BaseForecaster:
 
 
 class BaseLightningModule(LightningModule):
-    def __init__(self, horizon, n_samples, quantiles, lr, transform):
+    def __init__(self, horizon: int, n_samples: int, quantiles: List[float], lr: float, transform: List[str]):
         """
         Initializes the forecasting model with specified parameters.
 
@@ -111,7 +114,7 @@ class BaseLightningModule(LightningModule):
             n_samples (int): Number of samples to generate for probabilistic forecasting.
             quantiles (list or tuple): List of quantiles to predict (e.g., [0.1, 0.5, 0.9]).
             lr (float): Learning rate for the optimizer.
-            transform (str): Data transformation to apply. Must be either "identity" or "standard_scaler".
+            transform (List[str]): List of data transformations to apply.
 
         Raises:
             ValueError: If an unknown transform is provided.
@@ -122,49 +125,59 @@ class BaseLightningModule(LightningModule):
         self.n_samples = n_samples
         self.quantiles = quantiles
         self.lr = lr
-        if transform == "identity":
-            self.transform = IdentityTransform()
-        elif transform == "standard_scaler":
-            self.transform = StandardScaler()
-        else:
-            raise ValueError(f"Unknown transform: {transform}")
+        # Always create a pipeline for consistency
+        self.transform = TransformFactory.create_pipeline(transform)
+        
+        # Store transform parameters for consistency within each batch
+        self._current_transform_params = None
 
-    def training_step(self, batch, batch_idx):
+    def training_step(self, batch, batch_idx: int):
         input_seq, target_seq = batch
-        input_seq = self.transform.fit_transform(input_seq)
-        target_seq = self.transform.transform(target_seq)
+        # Fit transform on input sequence and store params
+        input_seq, self._current_transform_params = self.transform.fit_transform(input_seq)
+        # Transform target sequence using the same params
+        target_seq, _ = self.transform.transform(target_seq, self._current_transform_params)
         loss = self.loss(input_seq, target_seq, batch_idx)
         self.log("train_loss", loss, prog_bar=True)
         return loss
 
-    def validation_step(self, batch, batch_idx):
+    def validation_step(self, batch, batch_idx: int):
         input_seq, target_seq = batch
-        input_seq = self.transform.fit_transform(input_seq)
-        target_seq = self.transform.transform(target_seq)
+        # Fit transform on input sequence and store params
+        input_seq, self._current_transform_params = self.transform.fit_transform(input_seq)
+        # Transform target sequence using the same params
+        target_seq, _ = self.transform.transform(target_seq, self._current_transform_params)
         loss = self.loss(input_seq, target_seq, batch_idx)
         self.log("val_loss", loss, prog_bar=True)
         return loss
 
-    def test_step(self, batch, batch_idx):
+    def test_step(self, batch, batch_idx: int):
         input_seq, target_seq = batch
-        input_seq = self.transform.fit_transform(input_seq)
+        # Fit transform on input sequence and store params
+        input_seq, self._current_transform_params = self.transform.fit_transform(input_seq)
+        # Generate predictions
         pred_seq = self.model(input_seq, self.horizon, self.n_samples)
-        pred_seq = self.transform.inverse_transform(pred_seq)
+        # Inverse transform predictions to original scale
+        pred_seq, _ = self.transform.inverse_transform(pred_seq, self._current_transform_params)
         metrics = {
             "mase": mase(pred_seq, target_seq),
             "crps": crps(pred_seq, target_seq, self.quantiles),
         }
         self.log_dict(metrics, prog_bar=True)
 
-    def predict_step(self, batch, batch_idx):
+    def predict_step(self, batch, batch_idx: int):
         input_seq, _ = batch
-        input_seq = self.transform.fit_transform(input_seq)
+        # Fit transform on input sequence and store params
+        input_seq, self._current_transform_params = self.transform.fit_transform(input_seq)
+        # Generate predictions
         pred_seq = self.model(input_seq, self.horizon, self.n_samples)
-        pred_seq = self.transform.inverse_transform(pred_seq)
+        # Inverse transform predictions to original scale
+        pred_seq, _ = self.transform.inverse_transform(pred_seq, self._current_transform_params)
         return pred_seq
 
+    
     @abstractmethod
-    def loss(self, input_seq, target_seq, batch_idx):
+    def loss(self, input_seq, target_seq, batch_idx: int):
         """
         Compute the loss for a batch.
 
@@ -178,7 +191,7 @@ class BaseLightningModule(LightningModule):
         """
         raise NotImplementedError("Subclasses must implement this method")
 
-
+#TODO: let's delete it from the base interface; not all models will follow this pattern
 class BaseTorchModule(nn.Module):
     def forward(self, x, horizon, n_samples, y=None):
         """
