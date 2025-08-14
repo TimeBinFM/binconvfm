@@ -19,23 +19,224 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import logging
-from typing import Literal, Union, Optional, Dict, Tuple, List
-import warnings
-
-# PyTorch Lightning imports
-import pytorch_lightning as pl
-from pytorch_lightning import LightningModule
+from typing import Optional, List
+from torch.optim import Adam, Optimizer
 
 # Local imports
 from binconvfm.layers.DynamicTanh import DynamicTanh
-from binconvfm.utils.processing import (
-    StandardScaler, TemporalScaler, BinaryQuantizer, TransformPipeline
-)
-from binconvfm.utils.forecast import get_sequence_from_prob, most_probable_monotonic_sequence
-from binconvfm.utils.reshape import repeat
+from binconvfm.models.base import BaseForecaster, BaseLightningModule
+from binconvfm.transform import BinaryQuantizer
 
 # Set up logger
 logger = logging.getLogger(__name__)
+
+
+class BinConvForecaster(BaseForecaster):
+    """
+    BinConv forecaster following the standard interface.
+    """
+    
+    def __init__(
+        self,
+        # Common parameters - explicit
+        horizon: int = 1,
+        n_samples: int = 1000,
+        quantiles: List[float] = None,
+        batch_size: int = 32,
+        num_epochs: int = 10,
+        lr: float = 0.001,
+        accelerator: str = "cpu",
+        enable_progress_bar: bool = True,
+        logging: bool = False,
+        log_every_n_steps: int = 10,
+        transform: List[str] = None,
+        # BinConv-specific parameters - go to kwargs
+        **model_kwargs
+    ):
+        """Initialize BinConvForecaster."""
+        if quantiles is None:
+            quantiles = [(i + 1) / 10 for i in range(9)]
+        if transform is None:
+            transform = ['StandardScaler', 'BinaryQuantizer']
+            
+        # Set default values for BinConv-specific parameters if not provided
+        binconv_defaults = {
+            'context_length': 512,
+            'num_bins': 1024,
+            'min_bin_value': -10.0,
+            'max_bin_value': 10.0,
+            'kernel_size_across_bins_2d': 3,
+            'kernel_size_across_bins_1d': 3,
+            'num_filters_2d': 8,
+            'num_filters_1d': 32,
+            'num_1d_layers': 2,
+            'num_blocks': 3,
+            'kernel_size_ffn': 51,
+            'dropout': 0.2,
+        }
+        
+        # Update defaults with provided kwargs
+        for key, default_value in binconv_defaults.items():
+            if key not in model_kwargs:
+                model_kwargs[key] = default_value
+                
+        super().__init__(
+            horizon=horizon,
+            n_samples=n_samples,
+            quantiles=quantiles,
+            batch_size=batch_size,
+            num_epochs=num_epochs,
+            lr=lr,
+            accelerator=accelerator,
+            enable_progress_bar=enable_progress_bar,
+            logging=logging,
+            log_every_n_steps=log_every_n_steps,
+            transform=transform,
+            **model_kwargs  # Pass BinConv-specific parameters
+        )
+    
+    def _create_model(self):
+        """Create BinConvModule."""
+        self.model = BinConvModule(
+            horizon=self.horizon,
+            n_samples=self.n_samples,
+            quantiles=self.quantiles,
+            lr=self.lr,
+            transform=self.transform,
+            context_length=self.model_kwargs['context_length'],
+            num_bins=self.model_kwargs['num_bins'],
+            min_bin_value=self.model_kwargs['min_bin_value'],
+            max_bin_value=self.model_kwargs['max_bin_value'],
+            kernel_size_across_bins_2d=self.model_kwargs['kernel_size_across_bins_2d'],
+            kernel_size_across_bins_1d=self.model_kwargs['kernel_size_across_bins_1d'],
+            num_filters_2d=self.model_kwargs['num_filters_2d'],
+            num_filters_1d=self.model_kwargs['num_filters_1d'],
+            num_1d_layers=self.model_kwargs['num_1d_layers'],
+            num_blocks=self.model_kwargs['num_blocks'],
+            kernel_size_ffn=self.model_kwargs['kernel_size_ffn'],
+            dropout=self.model_kwargs['dropout'],
+        )
+
+
+class BinConvModule(BaseLightningModule):
+    """
+    PyTorch Lightning module for BinConv.
+    """
+    
+    def __init__(
+        self,
+        context_length: int,
+        num_bins: int,
+        min_bin_value: float,
+        max_bin_value: float,
+        kernel_size_across_bins_2d: int,
+        kernel_size_across_bins_1d: int,
+        num_filters_2d: int,
+        num_filters_1d: int,
+        num_1d_layers: int,
+        num_blocks: int,
+        kernel_size_ffn: int,
+        dropout: float,
+        horizon: int,
+        n_samples: int,
+        quantiles: List[float],
+        lr: float,
+        transform: List[str],
+    ):
+        """Initialize BinConvModule."""
+        super().__init__(horizon, n_samples, quantiles, lr, transform)
+        
+        # Override the binary quantizer with BinConv-specific parameters
+        self._update_binary_quantizer_params(num_bins, min_bin_value, max_bin_value)
+        
+        # Create the BinConv model
+        self.model = BinConv(
+            context_length=context_length,
+            num_bins=num_bins,
+            min_bin_value=min_bin_value,
+            max_bin_value=max_bin_value,
+            kernel_size_across_bins_2d=kernel_size_across_bins_2d,
+            kernel_size_across_bins_1d=kernel_size_across_bins_1d,
+            num_filters_2d=num_filters_2d,
+            num_filters_1d=num_filters_1d,
+            num_1d_layers=num_1d_layers,
+            num_blocks=num_blocks,
+            kernel_size_ffn=kernel_size_ffn,
+            dropout=dropout,
+        )
+    
+    def _update_binary_quantizer_params(self, num_bins: int, min_bin_value: float, max_bin_value: float) -> None:
+        """Update binary quantizer with BinConv-specific parameters."""
+        for i, (name, transformer) in enumerate(self.transform.steps):
+            if 'binary_quantizer' in name:
+                quantizer = BinaryQuantizer(
+                    num_bins=num_bins,
+                    min_val=min_bin_value,
+                    max_val=max_bin_value
+                )
+                self.transform.steps[i] = (name, quantizer)
+                self.transform.transformers[i] = quantizer
+                break
+    
+    def configure_optimizers(self) -> Optimizer:
+        """Configure optimizer."""
+        return Adam(self.model.parameters(), lr=self.lr)
+    
+    def loss(self, input_seq: torch.Tensor, target_seq: torch.Tensor, batch_idx: int) -> torch.Tensor:
+        """Compute loss for BinConv."""
+        logits = self.model(input_seq, n_samples=1)  # Single sample for training
+        return F.binary_cross_entropy_with_logits(logits, target_seq)
+    
+    def predict_step(self, batch, batch_idx: int) -> torch.Tensor:
+        """Autoregressive forecasting for multiple horizons."""
+        input_seq, _ = batch
+        
+        # Fit transform on input sequence and store params
+        input_seq, self._current_transform_params = self.transform.fit_transform(input_seq)
+        
+        # Generate autoregressive forecasts
+        forecasts = self._generate_autoregressive_forecasts(input_seq)
+        
+        # Inverse transform predictions to original scale
+        forecasts, _ = self.transform.inverse_transform(forecasts, self._current_transform_params)
+        
+        return forecasts
+    
+    def _generate_autoregressive_forecasts(self, input_seq: torch.Tensor) -> torch.Tensor:
+        """Generate autoregressive forecasts for multiple horizons."""
+        batch_size = input_seq.shape[0]
+        device = input_seq.device
+        
+        # Initialize current context with input sequence
+        current_context = input_seq.clone()  # (batch_size, context_length, num_bins)
+        
+        forecasts = []
+        
+        # Generate forecasts autoregressively for each horizon step
+        for step in range(self.horizon):
+            # Generate samples for current timestep
+            logits = self.model(current_context, n_samples=self.n_samples)  # (batch_size, n_samples, num_bins)
+            
+            # Convert logits to probabilities and sample
+            probs = torch.sigmoid(logits)
+            sampled = torch.bernoulli(probs)  # (batch_size, n_samples, num_bins)
+            
+            forecasts.append(sampled.unsqueeze(2))  # (batch_size, n_samples, 1, num_bins)
+            
+            # Update context for next step (autoregressive)
+            # Use the mean prediction across samples for context update
+            next_context = sampled.mean(dim=1, keepdim=True)  # (batch_size, 1, num_bins)
+            
+            # Remove oldest timestep and add new prediction
+            current_context = torch.cat([
+                current_context[:, 1:, :],  # Remove first timestep
+                next_context  # Add prediction as new timestep
+            ], dim=1)
+        
+        # Concatenate forecasts along horizon dimension
+        final_forecasts = torch.cat(forecasts, dim=2)  # (batch_size, n_samples, horizon, num_bins)
+        
+        return final_forecasts
 
 
 class BinConv(nn.Module):
@@ -45,15 +246,11 @@ class BinConv(nn.Module):
     This model uses binary quantization combined with 2D and 1D convolutions
     to perform autoregressive forecasting. The architecture processes quantized
     time series data through multiple convolutional blocks with residual connections.
-    
-    The model is designed as a foundation model, meaning each time series sample
-    is preprocessed independently without cross-sample information leakage.
     """
     
     def __init__(
         self, 
         context_length: int, 
-        is_prob_forecast: bool, 
         num_bins: int, 
         min_bin_value: float = -10.0,
         max_bin_value: float = 10.0, 
@@ -61,20 +258,17 @@ class BinConv(nn.Module):
         kernel_size_across_bins_1d: int = 3, 
         num_filters_2d: int = 8,
         num_filters_1d: int = 32, 
-        is_cum_sum: bool = False, 
         num_1d_layers: int = 2, 
         num_blocks: int = 3,
         kernel_size_ffn: int = 51, 
         dropout: float = 0.2,
-        last_layer: Literal["conv", "fc"] = 'conv',
-        scaler_type: Union[Literal["standard", "temporal", "None"], None] = None
+        n_samples_per_batch: int = None,
     ) -> None:
         """
         Initialize the BinConv model.
         
         Args:
             context_length: Length of input context window
-            is_prob_forecast: Whether to use probabilistic forecasting
             num_bins: Number of quantization bins
             min_bin_value: Minimum value for quantization range
             max_bin_value: Maximum value for quantization range
@@ -82,17 +276,15 @@ class BinConv(nn.Module):
             kernel_size_across_bins_1d: Kernel size for 1D convolution across bins
             num_filters_2d: Number of filters for 2D convolution
             num_filters_1d: Number of filters for 1D convolution
-            is_cum_sum: Whether to apply cumulative sum (deprecated, set to False)
             num_1d_layers: Number of 1D convolutional layers
             num_blocks: Number of convolutional blocks
             kernel_size_ffn: Kernel size for feed-forward network
             dropout: Dropout rate
-            last_layer: Type of last layer ("conv" or "fc")
-            scaler_type: Type of scaler ("standard", "temporal", or None)
+            n_samples_per_batch: Number of samples to process per batch (defaults to all samples)
             
         Raises:
             AssertionError: If kernel sizes are not odd
-            ValueError: If unsupported scaler_type is provided
+            ValueError: If filter dimensions don't match
         """
         super().__init__()
         
@@ -107,21 +299,16 @@ class BinConv(nn.Module):
         self.num_bins = num_bins
         self.min_bin_value = min_bin_value
         self.max_bin_value = max_bin_value
-        self.is_prob_forecast = is_prob_forecast
         self.num_filters_2d = num_filters_2d
         self.num_filters_1d = num_filters_1d
         self.kernel_size_across_bins_2d = kernel_size_across_bins_2d
         self.kernel_size_across_bins_1d = kernel_size_across_bins_1d
-        self.is_cum_sum = is_cum_sum
         self.num_1d_layers = num_1d_layers
         self.num_blocks = num_blocks
         self.kernel_size_ffn = kernel_size_ffn
-        self.last_layer = last_layer
+        self.n_samples_per_batch = n_samples_per_batch
         
         logger.info(f'BinConv initialized - dropout: {dropout}')
-        
-        # Initialize preprocessing scaler for foundation model approach
-        self._initialize_scaler(scaler_type)
         
         # Initialize dropout
         self.dropout = nn.Dropout(dropout)
@@ -130,64 +317,10 @@ class BinConv(nn.Module):
         if num_filters_2d != num_filters_1d:
             raise ValueError("num_filters_2d must equal num_filters_1d (architectural constraint)")
             
-        # Initialize activation functions
-        self._initialize_activations()
-        
         # Initialize convolutional layers
         self._initialize_conv_layers()
         
         logger.info(f'BinConv model initialized with {sum(p.numel() for p in self.parameters())} parameters')
-    
-    def _initialize_scaler(self, scaler_type: Union[str, None]) -> None:
-        """
-        Initialize preprocessing scaler for foundation model approach.
-        
-        Args:
-            scaler_type: Type of scaler to use
-        """
-        logger.info(f'Per-sample scaler type: {scaler_type}')
-        
-        if scaler_type is None:
-            self.scaler = None
-            logger.info('No preprocessors initialized (raw data mode)')
-        elif scaler_type == 'standard':
-            self.scaler = TransformPipeline([
-                    ('scaler', StandardScaler()),
-                    ('quantizer', BinaryQuantizer(
-                        num_bins=self.num_bins, 
-                        min_val=self.min_bin_value, 
-                        max_val=self.max_bin_value
-                    ))
-                ])
-
-            logger.info(f'Initialized a standard scaling preprocessor')
-        elif scaler_type == 'temporal':
-            self.scaler = TransformPipeline([
-                    ('scaler', TemporalScaler()),
-                    ('quantizer', BinaryQuantizer(
-                        num_bins=self.num_bins, 
-                        min_val=self.min_bin_value, 
-                        max_val=self.max_bin_value
-                    ))
-                ])
-            logger.info(f'Initialized a temporal scaling preprocessors')
-        else:
-            raise ValueError(f"Unsupported scaler_type: {scaler_type}. "
-                           f"Must be 'standard', 'temporal', or None.")
-    
-    def _initialize_activations(self) -> None:
-        """Initialize activation functions for convolutional blocks."""
-        self.act = nn.ModuleList([
-            nn.ModuleList([
-                DynamicTanh(
-                    normalized_shape=self.num_filters_2d if i < self.num_1d_layers else self.context_length,
-                    channels_last=False
-                )
-                for i in range(1)  # Applied only after conv2d
-            ]) for _ in range(self.num_blocks)
-        ])
-        
-        logger.debug(f'Initialized activation functions: {len(self.act)} blocks')
     
     def _initialize_conv_layers(self) -> None:
         """Initialize convolutional layers for single target dimension."""
@@ -214,30 +347,14 @@ class BinConv(nn.Module):
             ]) for _ in range(self.num_blocks)
         ])
         
-        # Feed-forward network layer
-        if self.last_layer == 'conv':
-            conv_ffn = nn.Conv1d(
-                in_channels=self.context_length,
-                out_channels=1,
-                kernel_size=self.kernel_size_ffn,
-                groups=1,
-                bias=True
-            )
-        elif self.last_layer == 'fc':
-            class MeanOverChannel(nn.Module):
-                def __init__(self, dim: int = -2):
-                    super().__init__()
-                    self.dim = dim
-
-                def forward(self, x: torch.Tensor) -> torch.Tensor:
-                    return x.mean(dim=self.dim)
-
-            conv_ffn = nn.Sequential(
-                MeanOverChannel(dim=-2),
-                nn.Linear(in_features=self.num_bins, out_features=self.num_bins, bias=True)
-            )
-        else:
-            raise ValueError(f"Unsupported last_layer type: {self.last_layer}")
+        # Feed-forward network layer (always convolutional)
+        conv_ffn = nn.Conv1d(
+            in_channels=self.context_length,
+            out_channels=1,
+            kernel_size=self.kernel_size_ffn,
+            groups=1,
+            bias=True
+        )
         
         # Activation functions
         act = nn.ModuleList([
@@ -252,7 +369,7 @@ class BinConv(nn.Module):
         logger.debug('Initialized layers for single target dimension:')
         logger.debug(f'  - Conv2D blocks: {len(conv2d)}')
         logger.debug(f'  - Conv1D blocks: {len(conv1d)}')
-        logger.debug(f'  - FFN layer type: {self.last_layer}')
+        logger.debug('  - FFN layer type: conv')
         
         self.layers = nn.ModuleDict({
             'conv2d': conv2d,
@@ -330,29 +447,85 @@ class BinConv(nn.Module):
         
         return conv_out
     
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, n_samples: int = 1) -> torch.Tensor:
         """
-        Forward pass through the BinConv model.
+        Forward pass through the BinConv model with sample batching.
         
         Args:
             x: Input tensor of shape (batch_size, context_length, num_bins)
+            n_samples: Number of samples to generate
             
         Returns:
-            Output tensor of shape (batch_size, num_bins)
+            - Training mode with n_samples=1: (batch_size, num_bins)
+            - Eval mode with n_samples=1: (batch_size, 1, num_bins) 
+            - Multiple samples: (batch_size, n_samples, num_bins)
             
         Raises:
             AssertionError: If input context length doesn't match expected length
         """
-        
         x = x.float()
-        batch_size, context_length, num_bins = x.shape
+        original_batch_size, context_length, num_bins_input = x.shape
         
         if context_length != self.context_length:
             raise AssertionError(f"Input context length {context_length} doesn't match "
                                f"expected length {self.context_length}")
         
-        logger.debug(f'Forward pass - input shape: {x.shape}')
+        logger.debug(f'Forward pass - input shape: {x.shape}, n_samples: {n_samples}')
         
+        # Handle multiple samples with batching
+        if n_samples == 1:
+            # Single sample - process directly
+            output = self._forward_single(x)  # (batch_size, num_bins)
+            
+            # Add sample dimension only in eval mode
+            if not self.training:
+                output = output.unsqueeze(1)  # (batch_size, 1, num_bins)
+            
+            return output
+        else:
+            # Multiple samples - use batching
+            return self._forward_multiple_samples(x, n_samples)
+    
+    def _forward_multiple_samples(self, x: torch.Tensor, n_samples: int) -> torch.Tensor:
+        """Process multiple samples with batching."""
+        original_batch_size = x.shape[0]
+        device = x.device
+        
+        # Determine samples per batch
+        n_samples_per_batch = self.n_samples_per_batch or n_samples
+        
+        # Calculate number of batches needed
+        n_batches = (n_samples + n_samples_per_batch - 1) // n_samples_per_batch
+        
+        all_outputs = []
+        
+        for batch_idx in range(n_batches):
+            # Calculate actual samples for this batch
+            start_sample = batch_idx * n_samples_per_batch
+            end_sample = min(start_sample + n_samples_per_batch, n_samples)
+            current_n_samples = end_sample - start_sample
+            
+            # Expand input for current number of samples
+            # From (batch_size, context_length, num_bins) to (batch_size * current_n_samples, context_length, num_bins)
+            expanded_input = x.unsqueeze(1).expand(
+                original_batch_size, current_n_samples, -1, -1
+            ).reshape(original_batch_size * current_n_samples, -1, x.shape[-1])
+            
+            # Process this batch
+            batch_output = self._forward_single(expanded_input)  # (batch_size * current_n_samples, num_bins)
+            
+            # Reshape back to (batch_size, current_n_samples, num_bins)
+            batch_output = batch_output.view(original_batch_size, current_n_samples, -1)
+            
+            all_outputs.append(batch_output)
+        
+        # Concatenate all sample batches
+        final_output = torch.cat(all_outputs, dim=1)  # (batch_size, n_samples, num_bins)
+        
+        return final_output
+    
+    def _forward_single(self, x: torch.Tensor) -> torch.Tensor:
+        """Single forward pass through the network."""
         # Process through convolutional blocks with residual connections
         for block_idx in range(self.num_blocks):
             residual = x
@@ -380,190 +553,13 @@ class BinConv(nn.Module):
             x = self.dropout(x)
             x = x + residual
         
-        # Final feed-forward layer
-        if self.last_layer == 'conv':
-            out = self.conv_layer(
-                x, 
-                self.layers["conv_ffn"], 
-                None, 
-                self.kernel_size_ffn, 
-                is_2d=False
-            ).squeeze(1)
-        else:
-            out = self.layers["conv_ffn"](x)
-        
-        # Apply cumulative sum if enabled (deprecated)
-        if self.is_cum_sum:
-            raise NotImplementedError("Cumulative sum is disabled as it degrades performance")
+        # Final feed-forward layer (convolutional)
+        out = self.conv_layer(
+            x, 
+            self.layers["conv_ffn"], 
+            None, 
+            self.kernel_size_ffn, 
+            is_2d=False
+        ).squeeze(1)
         
         return out
-    
-    @torch.inference_mode()
-    def forecast(
-        self, 
-        batch_data: torch.Tensor,
-        prediction_length: Optional[int],
-        num_samples: Optional[int] = None,
-    ) -> torch.Tensor:
-        """
-        Generate forecasts for input batch using autoregressive prediction.
-        
-        This method applies per-sample preprocessing and generates forecasts
-        independently for each sample, maintaining the foundation model philosophy.
-        
-        Args:
-            batch_data: Input tensor of shape (batch_size, context_length, 1)
-            num_samples: Number of forecast samples to generate (for probabilistic forecasting)
-            
-        Returns:
-            Forecast tensor with shape depending on sampling:
-            - If num_samples > 1: (batch_size, num_samples, prediction_length)
-            - Otherwise: (batch_size, 1, prediction_length)
-        """
-        do_sample = num_samples is not None and num_samples > 1 and self.is_prob_forecast
-        if self.scaler is not None:
-            c_inputs, current_pipeline_params = self.scaler.transform(batch_data)
-            c_inputs = c_inputs.squeeze(-2)
-        else:
-            c_inputs = batch_data
-            current_pipeline_params = None
-
-        if do_sample:
-            c_inputs = repeat(c_inputs.unsqueeze(1), num_samples, 1)  # (B, NS, T, D)
-            batch_size = c_inputs.shape[0]
-            c_inputs = c_inputs.view(-1, *c_inputs.shape[2:]) # to process using only one inference
-
-        current_context = c_inputs.clone()
-        c_forecasts = []
-        for step in range(prediction_length):
-            # Forward pass
-            pred = F.sigmoid(self(current_context))  # (B, num_bins)
-
-            # Sample or take most probable sequence
-            pred, _ = get_sequence_from_prob(pred, do_sample)
-            pred = pred.int().unsqueeze(1) # (B, 1, num_bins)
-            c_forecasts.append(pred)
-
-            # Update context for next step
-            next_input = pred
-            current_context = torch.cat([current_context[:, 1:], next_input], dim=1)
-
-        # Concatenate forecasts
-        c_forecasts = torch.cat(c_forecasts, dim=1)  # (B, prediction_length, num_bins)
-
-        # Apply inverse transformation
-        if self.scaler is not None and current_pipeline_params is not None:
-            c_forecasts = self.scaler.inverse_transform(c_forecasts.unsqueeze(0), current_pipeline_params)
-
-        # Reshape for sampling
-        if do_sample:
-            c_forecasts = c_forecasts.view(batch_size, num_samples, *c_forecasts.shape[1:])
-        else:
-            c_forecasts = c_forecasts.unsqueeze(1)  # (B, 1, T, D)
-
-        return c_forecasts
-
-
-class LightningBinConv(BinConv, LightningModule):
-    """
-    PyTorch Lightning wrapper for BinConv model.
-    
-    Provides training loop, loss computation, and optimizer configuration
-    for the binary convolution forecasting model. Handles preprocessing
-    automatically and supports both training and validation.
-    """
-    
-    def __init__(self, lr: float = 1e-3, *args, **kwargs):
-        """
-        Initialize Lightning wrapper for BinConv.
-        
-        Args:
-            lr: Learning rate for optimizer
-            *args: Arguments passed to BinConv
-            **kwargs: Keyword arguments passed to BinConv
-        """
-        super().__init__(*args, **kwargs)
-        self.lr = lr
-        self.save_hyperparameters()
-        
-        logger.info(f'LightningBinConv initialized with learning rate: {lr}')
-    
-    def training_step(self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx: int) -> torch.Tensor:
-        """
-        Training step for one batch.
-        
-        Args:
-            batch: Tuple of (inputs, targets) tensors where:
-                   - inputs: Raw input data (batch_size, context_length, target_dim)
-                   - targets: Target data (batch_size, prediction_length, target_dim)
-            batch_idx: Index of the current batch
-            
-        Returns:
-            torch.Tensor: Training loss for this batch
-        """
-        inputs, targets = batch
-
-
-        if self.scaler is not None:
-            inputs, params = self.scaler.transform(inputs)
-            targets, _ = self.scaler.transform(targets.unsqueeze(-1), params)
-            inputs, targets = inputs.squeeze(), targets.squeeze()
-
-        logits = self(inputs)
-
-        loss = F.binary_cross_entropy_with_logits(logits, targets)
-        
-        # Log metrics
-        self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
-        
-        if batch_idx % 100 == 0:  # Log every 100 batches to avoid spam
-            logger.debug(f'Batch {batch_idx}: Training loss = {loss.item():.6f}')
-        
-        return loss
-    
-    def validation_step(self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx: int) -> torch.Tensor:
-        """
-        Validation step for one batch.
-        
-        Args:
-            batch: Tuple of (inputs, targets) tensors
-            batch_idx: Index of the current batch
-            
-        Returns:
-            torch.Tensor: Validation loss for this batch
-        """
-        inputs, targets = batch
-
-        if self.scaler is not None:
-            inputs, params = self.scaler.transform(inputs)
-            targets, _ = self.scaler.transform(targets.unsqueeze(-1), params)
-            inputs, targets = inputs.squeeze(), targets.squeeze()
-
-        logits = self(inputs)
-        loss = F.binary_cross_entropy_with_logits(logits, targets)
-        
-        # Log metrics
-        self.log("val_loss", loss, on_step=False, on_epoch=True, prog_bar=True, logger=True)
-        
-        return loss
-    
-    def configure_optimizers(self) -> torch.optim.Optimizer:
-        """
-        Configure optimizer for training.
-        
-        Returns:
-            torch.optim.Optimizer: Adam optimizer with specified learning rate
-        """
-        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
-        logger.info(f'Configured Adam optimizer with lr={self.lr}')
-        return optimizer
-    
-    def setup(self, stage: Optional[str] = None) -> None:
-        """
-        Setup method called by Lightning.
-        
-        Args:
-            stage: Training stage ('fit', 'validate', 'test', 'predict')
-        """
-        logger.info(f'Lightning setup called for stage: {stage}')
-        logger.info('BinConv uses per-sample preprocessing (foundation model approach)')
