@@ -22,7 +22,7 @@ class BaseForecaster:
         logging: bool = False,
         log_every_n_steps: int = 10,
         transform: List[str] = ["IdentityTransform"],
-        **model_kwargs
+        **kwargs
     ):
         """
         Initializes the base model with the specified configuration.
@@ -53,7 +53,7 @@ class BaseForecaster:
             self.logger = CSVLogger(save_dir="logs")
         self.log_every_n_steps = log_every_n_steps
         self.transform = transform
-        self.model_kwargs = model_kwargs  # Store model-specific parameters
+        self.kwargs = kwargs  # Store model-specific parameters
         self.trainer = None
         self.model = None
 
@@ -135,19 +135,12 @@ class BaseLightningModule(LightningModule):
         # Always create a pipeline for consistency
         self.transform = TransformFactory.create_pipeline(transform)
 
-        # Store transform parameters for consistency within each batch
-        self._current_transform_params = None
-
     def training_step(self, batch, batch_idx: int):
         input_seq, target_seq = batch
         # Fit transform on input sequence and store params
-        input_seq, self._current_transform_params = self.transform.fit_transform(
-            input_seq
-        )
+        input_seq, transform_params = self.transform.fit_transform(input_seq)
         # Transform target sequence using the same params
-        target_seq, _ = self.transform.transform(
-            target_seq, self._current_transform_params
-        )
+        target_seq = self.transform.transform(target_seq, transform_params)
         loss = self.loss(input_seq, target_seq, batch_idx)
         self.log("train_loss", loss, prog_bar=True)
         return loss
@@ -155,13 +148,9 @@ class BaseLightningModule(LightningModule):
     def validation_step(self, batch, batch_idx: int):
         input_seq, target_seq = batch
         # Fit transform on input sequence and store params
-        input_seq, self._current_transform_params = self.transform.fit_transform(
-            input_seq
-        )
+        input_seq, transform_params = self.transform.fit_transform(input_seq)
         # Transform target sequence using the same params
-        target_seq, _ = self.transform.transform(
-            target_seq, self._current_transform_params
-        )
+        target_seq = self.transform.transform(target_seq, transform_params)
         loss = self.loss(input_seq, target_seq, batch_idx)
         self.log("val_loss", loss, prog_bar=True)
         return loss
@@ -169,15 +158,11 @@ class BaseLightningModule(LightningModule):
     def test_step(self, batch, batch_idx: int):
         input_seq, target_seq = batch
         # Fit transform on input sequence and store params
-        input_seq, self._current_transform_params = self.transform.fit_transform(
-            input_seq
-        )
+        input_seq, transform_params = self.transform.fit_transform(input_seq)
         # Generate predictions
         pred_seq = self.model(input_seq, self.horizon, self.n_samples)
         # Inverse transform predictions to original scale
-        pred_seq, _ = self.transform.inverse_transform(
-            pred_seq, self._current_transform_params
-        )
+        pred_seq = self.transform.inverse_transform(pred_seq, transform_params)
         metrics = {
             "mase": mase(pred_seq, target_seq),
             "crps": crps(pred_seq, target_seq, self.quantiles),
@@ -187,15 +172,11 @@ class BaseLightningModule(LightningModule):
     def predict_step(self, batch, batch_idx: int):
         input_seq, _ = batch
         # Fit transform on input sequence and store params
-        input_seq, self._current_transform_params = self.transform.fit_transform(
-            input_seq
-        )
+        input_seq, transform_params = self.transform.fit_transform(input_seq)
         # Generate predictions
         pred_seq = self.model(input_seq, self.horizon, self.n_samples)
         # Inverse transform predictions to original scale
-        pred_seq, _ = self.transform.inverse_transform(
-            pred_seq, self._current_transform_params
-        )
+        pred_seq = self.transform.inverse_transform(pred_seq, transform_params)
         return pred_seq
 
     @abstractmethod

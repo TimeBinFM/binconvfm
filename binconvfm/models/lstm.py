@@ -23,7 +23,7 @@ class LSTMForecaster(BaseForecaster):
         log_every_n_steps: int = 10,
         transform: List[str] = ["IdentityTransform"],
         # LSTM-specific parameters - go to kwargs
-        **model_kwargs
+        **kwargs
     ):
         """
         Initialize the LSTMForecaster.
@@ -43,15 +43,11 @@ class LSTMForecaster(BaseForecaster):
         """
 
         # Set default values for LSTM-specific parameters if not provided
-        lstm_defaults = {
+        defaults = {
             "hidden_dim": 64,
             "n_layers": 1,
         }
-
-        # Update defaults with provided kwargs
-        for key, default_value in lstm_defaults.items():
-            if key not in model_kwargs:
-                model_kwargs[key] = default_value
+        kwargs = {**defaults, **kwargs}
 
         super().__init__(
             horizon=horizon,
@@ -65,7 +61,7 @@ class LSTMForecaster(BaseForecaster):
             logging=logging,
             log_every_n_steps=log_every_n_steps,
             transform=transform,
-            **model_kwargs  # Pass LSTM-specific parameters
+            **kwargs,  # Pass LSTM-specific parameters
         )
 
     def _create_model(self):
@@ -78,8 +74,7 @@ class LSTMForecaster(BaseForecaster):
             quantiles=self.quantiles,
             lr=self.lr,
             transform=self.transform,
-            hidden_dim=self.model_kwargs["hidden_dim"],
-            n_layers=self.model_kwargs["n_layers"],
+            **self.kwargs,
         )
 
 

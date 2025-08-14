@@ -13,17 +13,17 @@ The interface follows sklearn conventions:
 
 Example usage:
     from binconvfm.transform import StandardScaler, BinaryQuantizer, Pipeline
-    
+
     # Create transforms
     scaler = StandardScaler()
     quantizer = BinaryQuantizer(num_bins=1000)
-    
+
     # Create pipeline
     pipeline = Pipeline([
         ('scaler', scaler),
         ('quantizer', quantizer)
     ])
-    
+
     # Use pipeline
     transformed_data, params = pipeline.transform(data)
     original_data = pipeline.inverse_transform(transformed_data, params)
@@ -35,10 +35,10 @@ from .quantizers import BinaryQuantizer
 from .pipeline import Pipeline
 
 __all__ = [
-    'BaseTransform',
-    'IdentityTransform',
-    'StandardScaler', 
-    'TemporalScaler',
-    'BinaryQuantizer',
-    'Pipeline'
+    "BaseTransform",
+    "IdentityTransform",
+    "StandardScaler",
+    "TemporalScaler",
+    "BinaryQuantizer",
+    "Pipeline",
 ]
