@@ -3,7 +3,7 @@ from pytorch_lightning.loggers import CSVLogger
 from pytorch_lightning import LightningModule
 from binconvfm.utils.metrics import mase, crps
 from abc import abstractmethod, ABC
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 import torch
 import torch.nn as nn
 from binconvfm.transform.factory import TransformFactory
@@ -61,6 +61,7 @@ class BaseForecaster:
             logging: bool = False,
             log_every_n_steps: int = 10,
             transform: List[str] = ["IdentityTransform"],
+            transform_args: Optional[Dict[str, Dict[str, Any]]] = None,
             **kwargs
     ):
         """
@@ -90,6 +91,7 @@ class BaseForecaster:
             self.logger = CSVLogger(save_dir="logs")
         self.log_every_n_steps = log_every_n_steps
         self.transform = transform
+        self.transform_args = transform_args or {}
         self.kwargs = kwargs  # Store model-specific parameters
         self.trainer = None
         self.model = None
@@ -146,6 +148,7 @@ class BaseLightningModule(LightningModule):
             quantiles: List[float],
             lr: float,
             transform: List[str],
+            transform_args: Optional[Dict[str, Dict[str, Any]]] = None,
     ):
         """
         Initializes the forecasting model with specified parameters.
@@ -165,7 +168,8 @@ class BaseLightningModule(LightningModule):
         self.quantiles = quantiles
         self.lr = lr
         # Always create a pipeline for consistency
-        self.transform = TransformFactory.create_pipeline(transform)
+        self.transform_args = transform_args or {}
+        self.transform = TransformFactory.create_pipeline(transform, self.transform_args)
         self.horizon = None
 
     def training_step(self, batch, batch_idx: int):

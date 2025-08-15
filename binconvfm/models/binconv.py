@@ -4,8 +4,8 @@ from torch.optim import Adam
 from torch.optim import Optimizer
 import torch.nn.functional as F
 from binconvfm.models.base import BaseForecaster, BaseLightningModule, BaseModel
-from typing import Optional, List
-
+from typing import Optional, List, Dict, Any
+from binconvfm.utils.forecast import get_sequence_from_prob
 import logging
 
 # Local imports
@@ -26,7 +26,7 @@ class BinConvForecaster(BaseForecaster):
             self,
             # Common parameters - explicit
             horizon: int = 1,
-            n_samples: int = 1000,
+            n_samples: int = 5,
             quantiles: List[float] = None,
             batch_size: int = 32,
             num_epochs: int = 10,
@@ -36,6 +36,7 @@ class BinConvForecaster(BaseForecaster):
             logging: bool = False,
             log_every_n_steps: int = 10,
             transform: List[str] = None,
+            transform_args: Optional[Dict[str, Dict[str, Any]]] = None,
             # BinConv-specific parameters - go to kwargs
             **kwargs
     ):
@@ -66,6 +67,17 @@ class BinConvForecaster(BaseForecaster):
             if key not in kwargs:
                 kwargs[key] = default_value
 
+        # Set up default transform_args if not provided and BinaryQuantizer is used
+        if transform_args is None:
+            transform_args = {}
+
+        if 'BinaryQuantizer' in transform and 'BinaryQuantizer' not in transform_args:
+            transform_args['BinaryQuantizer'] = {
+                'num_bins': kwargs['num_bins'],
+                'min_val': kwargs['min_bin_value'],
+                'max_val': kwargs['max_bin_value']
+            }
+
         super().__init__(
             horizon=horizon,
             n_samples=n_samples,
@@ -78,17 +90,23 @@ class BinConvForecaster(BaseForecaster):
             logging=logging,
             log_every_n_steps=log_every_n_steps,
             transform=transform,
+            transform_args=transform_args,
             **kwargs  # Pass BinConv-specific parameters
         )
 
     def _create_model(self):
         """Create BinConvModule."""
+        print('num bins:')
+        print(self.kwargs['num_bins'])
+        print('n samples:')
+        print(self.n_samples)
         self.model = BinConvModule(
             horizon=self.horizon,
             n_samples=self.n_samples,
             quantiles=self.quantiles,
             lr=self.lr,
             transform=self.transform,
+            transform_args=self.transform_args,
             context_length=self.kwargs['context_length'],
             num_bins=self.kwargs['num_bins'],
             min_bin_value=self.kwargs['min_bin_value'],
@@ -106,27 +124,28 @@ class BinConvForecaster(BaseForecaster):
 
 class BinConvModule(BaseLightningModule):
     def __init__(
-        self,
-        context_length: int,
-        num_bins: int,
-        min_bin_value: float,
-        max_bin_value: float,
-        kernel_size_across_bins_2d: int,
-        kernel_size_across_bins_1d: int,
-        num_filters_2d: int,
-        num_filters_1d: int,
-        num_1d_layers: int,
-        num_blocks: int,
-        kernel_size_ffn: int,
-        dropout: float,
-        horizon: int,
-        n_samples: int,
-        quantiles: List[float],
-        lr: float,
-        transform: List[str],
+            self,
+            context_length: int,
+            num_bins: int,
+            min_bin_value: float,
+            max_bin_value: float,
+            kernel_size_across_bins_2d: int,
+            kernel_size_across_bins_1d: int,
+            num_filters_2d: int,
+            num_filters_1d: int,
+            num_1d_layers: int,
+            num_blocks: int,
+            kernel_size_ffn: int,
+            dropout: float,
+            horizon: int,
+            n_samples: int,
+            quantiles: List[float],
+            lr: float,
+            transform: List[str],
+            transform_args: Optional[Dict[str, Dict[str, Any]]] = None,
     ):
         """Initialize BinConvModule."""
-        super().__init__(n_samples, quantiles, lr, transform)
+        super().__init__(n_samples, quantiles, lr, transform, transform_args)
         self.save_hyperparameters()
         # Create the BinConv model
         self.model = BinConv(
@@ -156,8 +175,11 @@ class BinConvModule(BaseLightningModule):
 
     def loss(self, output_seq: torch.Tensor, target_seq: torch.Tensor, batch_idx: int) -> torch.Tensor:
         """Compute loss for BinConv."""
+        if target_seq.ndim == 4:
+            target_seq = target_seq.squeeze(dim=(1, 2))
+        else:
+            assert target_seq.ndim == 2, "unexpected target sequence dimension"
         return F.binary_cross_entropy_with_logits(output_seq, target_seq)
-
 
 
 class BinConv(BaseModel):
@@ -395,46 +417,51 @@ class BinConv(BaseModel):
         return self._forward_single(x)
 
     def forecast(self, x: torch.Tensor, horizon: int, n_samples: int,
-                n_samples_per_batch: Optional[int] = None) -> torch.Tensor:
+                 n_samples_per_batch: Optional[int] = None, do_sample: Optional[bool] = False) -> torch.Tensor:
         """Generate autoregressive forecasts for multiple horizons."""
         if n_samples_per_batch is None:
             n_samples_per_batch = n_samples
 
         # Initialize current context with input sequence
         current_context = x.clone()  # (batch_size, context_length, num_bins)
-
+        print('current_context', current_context.shape)
         forecasts = []
 
         # Generate forecasts autoregressively for each horizon step
         for step in range(horizon):
             # Generate samples for current timestep
             if n_samples == 1:
-                logits = self.forward(current_context).unsqueeze(1)
+                logits = self.forward(current_context)
             else:
                 logits = self._forward_multiple_samples(current_context, n_samples=n_samples,
                                                         n_samples_per_batch=n_samples_per_batch)  # (batch_size, n_samples, num_bins)
 
             # Convert logits to probabilities and sample
             probs = torch.sigmoid(logits)
-            sampled = torch.bernoulli(probs)  # (batch_size, n_samples, num_bins)
+            print('probs', probs.shape)
 
-            forecasts.append(sampled.unsqueeze(2))  # (batch_size, n_samples, 1, num_bins)
+            # print(pred.min(), pred.max())
+            pred, _ = get_sequence_from_prob(probs, do_sample)
+            # TODO: wonderful unsqueezing :)
+            pred = pred.unsqueeze(1).unsqueeze(1)
+            print('pred', pred.shape)
+            # pred = pred.int()
+            forecasts.append(pred)  # (B, 1, 1, D); (batch_size, context_length, n_features, num_bins)
+            next_input = pred
 
-            # Update context for next step (autoregressive)
-            # Use the mean prediction across samples for context update
-            # TODO: incorrect
-            next_context = sampled.mean(dim=1, keepdim=True)  # (batch_size, 1, num_bins)
+            # if len(current_context.shape) == 4:
+            #     next_input = next_input.unsqueeze(1)
 
-            # Remove oldest timestep and add new prediction
-            current_context = torch.cat([
-                current_context[:, 1:, :],  # Remove first timestep
-                next_context  # Add prediction as new timestep
-            ], dim=1)
-
+            print('next_input', next_input.shape)
+            print('current_context', current_context.shape)
+            if current_context.shape[1] < self.context_length:  # TODO: double check
+                current_context = torch.cat([current_context, next_input], dim=1)
+            else:
+                current_context = torch.cat([current_context[:, 1:], next_input], dim=1)
         # Concatenate forecasts along horizon dimension
-        final_forecasts = torch.cat(forecasts, dim=2)  # (batch_size, n_samples, horizon, num_bins)
+        final_forecasts = torch.cat(forecasts, dim=1)  # (batch_size, context_length, n_features, num_bins)
 
-        return final_forecasts
+        return final_forecasts.unsqueeze(1) # (batch_size, 1, context_length, n_features, num_bins)
 
     def _forward_multiple_samples(self, x: torch.Tensor, n_samples: int, n_samples_per_batch: int) -> torch.Tensor:
         """Process multiple samples with batching."""
@@ -473,6 +500,8 @@ class BinConv(BaseModel):
     def _forward_single(self, x: torch.Tensor) -> torch.Tensor:
         """Single forward pass through the network."""
         # Process through convolutional blocks with residual connections
+        print('forward single')
+        print(x.shape)
         for block_idx in range(self.num_blocks):
             residual = x
 
@@ -507,5 +536,5 @@ class BinConv(BaseModel):
             self.kernel_size_ffn,
             is_2d=False
         ).squeeze(1)
-
+        print(out.shape)
         return out

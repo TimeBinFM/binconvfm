@@ -4,7 +4,7 @@ from torch.optim import Adam
 from torch.optim import Optimizer
 import torch.nn.functional as F
 from binconvfm.models.base import BaseForecaster, BaseLightningModule, BaseModel
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 
 
 class LSTMForecaster(BaseForecaster):
@@ -20,6 +20,7 @@ class LSTMForecaster(BaseForecaster):
             logging: bool = False,
             log_every_n_steps: int = 10,
             transform: List[str] = ["IdentityTransform"],
+            transform_args: Optional[Dict[str, Dict[str, Any]]] = None,
             **kwargs
     ):
         """
@@ -57,6 +58,7 @@ class LSTMForecaster(BaseForecaster):
             logging=logging,
             log_every_n_steps=log_every_n_steps,
             transform=transform,
+            transform_args=transform_args,
             **kwargs,  # Pass LSTM-specific parameters
         )
 
@@ -69,6 +71,7 @@ class LSTMForecaster(BaseForecaster):
             quantiles=self.quantiles,
             lr=self.lr,
             transform=self.transform,
+            transform_args=self.transform_args,
             **self.kwargs,
         )
 
@@ -82,6 +85,7 @@ class LSTMModule(BaseLightningModule):
             quantiles: List[float],
             lr: float,
             transform: List[str],
+            transform_args: Optional[Dict[str, Dict[str, Any]]] = None,
     ):
         """
         Initialize the LSTMModule for PyTorch Lightning training.
@@ -93,7 +97,7 @@ class LSTMModule(BaseLightningModule):
             quantiles (list[float]): List of quantiles for probabilistic forecasting.
             lr (float): Learning rate.
         """
-        super().__init__(n_samples, quantiles, lr, transform)
+        super().__init__(n_samples, quantiles, lr, transform, transform_args)
         self.save_hyperparameters()
         self.model = LSTM(hidden_dim, n_layers)
 

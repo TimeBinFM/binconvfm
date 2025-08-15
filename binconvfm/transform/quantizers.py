@@ -145,7 +145,7 @@ class BinaryQuantizer(BaseTransform):
         Returns:
             Tuple of (reconstructed_tensor, parameters_used)
         """
-        self._validate_input_shape(data, self.inverse_input_dims, "inverse_transform")
+        # self._validate_input_shape(data, self.inverse_input_dims, "inverse_transform")
 
         # Use internal parameters (bin_values stored in object)
         bin_values = self.bin_values.to(data.device)
