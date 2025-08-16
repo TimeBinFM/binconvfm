@@ -20,7 +20,7 @@ def create_model(ModelClass, input_len, n_samples, **kwargs):
             num_filters_1d=input_len,
             num_bins=1024,
             num_blocks=1,
-            n_samples=1,
+            n_samples=n_samples,
             **kwargs
         )
     else:
@@ -50,7 +50,7 @@ class TestOnDummyDataset:
     def setup_class(self):
         self.horizon = 5
         self.batch_size = 32
-        self.n_samples = 1000
+        self.n_samples = 2
         self.input_len = 20
         train_ds = DummyDataset(input_len=self.input_len, output_len=1)
         test_ds = DummyDataset(input_len=self.input_len, output_len=self.horizon)
@@ -98,7 +98,7 @@ class TestOnDummyDataset:
             assert isinstance(p, torch.Tensor), "Each prediction should be a Tensor"
             assert p.shape == (
                 self.batch_size,
-                self.model.n_samples,
+                self.n_samples,
                 self.horizon,
                 1,
             ), "Each prediction should have shape (batch_size, n_samples, horizon, dim)"
