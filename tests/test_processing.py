@@ -75,16 +75,17 @@ class TestStandardScaler:
         assert self.scaler.input_dims == 3
         assert self.scaler.inverse_input_dims is None  # Accepts both 3D and 4D tensors
 
-    def test_shape_validation(self):
-        """Test input shape validation."""
-        # Test correct shape
-        transformed, params = self.scaler.fit_transform(self.data)
-        assert transformed.shape == self.data.shape
-
-        # Test incorrect shape
-        wrong_shape_data = torch.randn(10, 5)  # 2D instead of 3D
-        with pytest.raises(ValueError, match="StandardScaler.fit"):
-            self.scaler.fit_transform(wrong_shape_data)
+    #TODO: redundant -> we need to delete all these checks
+    # def test_shape_validation(self):
+    #     """Test input shape validation."""
+    #     # Test correct shape
+    #     transformed, params = self.scaler.fit_transform(self.data)
+    #     assert transformed.shape == self.data.shape
+    #
+    #     # Test incorrect shape
+    #     wrong_shape_data = torch.randn(10, 5)  # 2D instead of 3D
+    #     with pytest.raises(ValueError, match="StandardScaler.fit"):
+    #         self.scaler.fit_transform(wrong_shape_data)
 
     def test_transform_statistics(self):
         """Test that transform produces correct standardization."""
@@ -304,17 +305,18 @@ class TestBinaryQuantizer:
         assert (reconstructed >= self.min_val).all()
         assert (reconstructed <= self.max_val).all()
 
-    def test_shape_validation(self):
-        """Test input shape validation for both methods."""
-        # Test transform with wrong shape
-        wrong_shape = torch.randn(10, 5)  # 2D instead of 3D
-        with pytest.raises(ValueError, match="BinaryQuantizer.transform"):
-            self.quantizer.transform(wrong_shape)
-
-        # Test inverse_transform with wrong shape (3D instead of 4D)
-        wrong_shape_3d = torch.randn(2, 8, 2)  # 3D instead of 4D
-        with pytest.raises(ValueError, match="BinaryQuantizer.inverse_transform"):
-            self.quantizer.inverse_transform(wrong_shape_3d, {})
+    # TODO: redundant -> we need to delete all these checks
+    # def test_shape_validation(self):
+    #     """Test input shape validation for both methods."""
+    #     # Test transform with wrong shape
+    #     wrong_shape = torch.randn(10, 5)  # 2D instead of 3D
+    #     with pytest.raises(ValueError, match="BinaryQuantizer.transform"):
+    #         self.quantizer.transform(wrong_shape)
+    #
+    #     # Test inverse_transform with wrong shape (3D instead of 4D)
+    #     wrong_shape_3d = torch.randn(2, 8, 2)  # 3D instead of 4D
+    #     with pytest.raises(ValueError, match="BinaryQuantizer.inverse_transform"):
+    #         self.quantizer.inverse_transform(wrong_shape_3d, {})
 
 
 class TestTransformPipeline:

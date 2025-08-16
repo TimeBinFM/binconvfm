@@ -1,5 +1,5 @@
 import inspect
-from typing import List
+from typing import List, Union, Dict, Any, Tuple
 from . import scalers, quantizers
 from .pipeline import Pipeline
 
@@ -8,12 +8,14 @@ class TransformFactory:
     """Factory class for creating data transformation pipelines from string specifications."""
 
     @classmethod
-    def create_pipeline(cls, transform_list: List[str]) -> Pipeline:
+    def create_pipeline(cls, transform_list: List[str], transform_args: Dict[str, Dict[str, Any]] = None) -> Pipeline:
         """
-        Create a transform pipeline from a list of transform names.
+        Create a transform pipeline from a list of transform names with optional parameters.
 
         Args:
             transform_list: List of transform names (in CamelCase)
+            transform_args: Dict mapping transform names to their parameters
+                          e.g., {"BinaryQuantizer": {"num_bins": 100, "min_val": -5.0}}
 
         Returns:
             Pipeline object with the specified transforms
@@ -21,12 +23,17 @@ class TransformFactory:
         Raises:
             ValueError: If an unknown transform is provided
         """
+        transform_args = transform_args or {}
         steps = []
+        
         for transform_name in transform_list:
             transform_class = cls._find_transform_class(transform_name)
+            
+            # Get parameters for this transform
+            transform_params = transform_args.get(transform_name, {})
 
-            # Create transform instance
-            transform_instance = transform_class()
+            # Create transform instance with parameters
+            transform_instance = transform_class(**transform_params)
 
             # Add to pipeline
             steps.append((transform_name, transform_instance))
