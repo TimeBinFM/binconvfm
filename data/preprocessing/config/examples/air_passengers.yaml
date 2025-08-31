@@ -1,0 +1,7 @@
+# Dataset configuration
+dataset:
+  name: air-passengers
+  repo_id: duol/airpassengers
+  files: 
+    - AP.csv
+  cache_dir: data/cache

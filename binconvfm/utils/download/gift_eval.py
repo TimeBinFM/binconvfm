@@ -4,10 +4,10 @@ import torch
 from huggingface_hub import list_repo_files
 import datasets
 from torch.utils.data import IterableDataset, get_worker_info
-from preprocessing.transform.dataset_builder import Builder
-from preprocessing.transform.probabilistic_mixing_dataset import ProbabilisticMixingDataset
-from preprocessing.downloader.gift_eval import GiftEvalWrapperDataset
-from preprocessing.transform.concat_dataset import ConcatDataset
+from data.preprocessing.transform.dataset_builder import Builder
+from data.preprocessing.transform.probabilistic_mixing_dataset import ProbabilisticMixingDataset
+from data.preprocessing.downloader.gift_eval import GiftEvalWrapperDataset
+from data.preprocessing.transform.concat_dataset import ConcatDataset
 
 
 def list_arrow_files(dataset_name):
