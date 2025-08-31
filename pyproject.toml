@@ -9,6 +9,7 @@ packages = [{include = "binconvfm"}]
 [tool.poetry.dependencies]
 python = "^3.11"
 lightning = "^2.5.2"
+pytorch_lightning = "^2.5.2"
 matplotlib = "^3.10.3"
 notebook = "^7.4.4"
 ipywidgets = "^8.1.7"
