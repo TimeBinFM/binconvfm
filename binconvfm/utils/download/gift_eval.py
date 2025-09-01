@@ -86,7 +86,8 @@ class PostProcessingDataset(IterableDataset):
                 datasets.load_dataset(
                     self.dataset_name,
                     split=self.split,
-                    data_files=[file_name]
+                    data_files=[file_name],
+                    streaming=True,
                 )
             )
             for file_name in file_names
