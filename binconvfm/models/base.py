@@ -2,7 +2,7 @@ from pytorch_lightning import Trainer
 from pytorch_lightning.loggers import CSVLogger
 from pytorch_lightning import LightningModule
 import torch.nn as nn
-from binconvfm.utils.metrics import mase, crps
+from binconvfm.utils.metrics import mase, crps, nmae
 from abc import abstractmethod
 from typing import List
 from binconvfm.transform.factory import TransformFactory
@@ -164,6 +164,7 @@ class BaseLightningModule(LightningModule):
         metrics = {
             "mase": mase(pred_seq, target_seq),
             "crps": crps(pred_seq, target_seq, self.quantiles),
+            "nmae": nmae(pred_seq, target_seq),
         }
         self.log_dict(metrics, prog_bar=True)
 

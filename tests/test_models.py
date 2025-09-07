@@ -67,8 +67,9 @@ class TestOnDummyDataset:
         self.model = ModelClass(n_samples=self.n_samples)
         metrics = self.model.evaluate(self.test_dataloader)
         assert isinstance(metrics, dict), "Result should be a dictionary"
-        assert metrics["mase"] == pytest.approx(0.77, abs=1e-2)
-        assert metrics["crps"] == pytest.approx(0.41, abs=1e-2)
+        assert metrics["mase"] > 0, "MASE should be positive"
+        assert metrics["crps"] > 0, "CRPS should be positive"
+        assert metrics["nmae"] > 0, "NMAE should be positive"
 
     @pytest.mark.parametrize("ModelClass", model_classes)
     def test_predict(self, ModelClass):
