@@ -102,6 +102,7 @@ class TestOnDummyDataset:
                 self.horizon,
                 1,
             ), "Each prediction should have shape (batch_size, n_samples, horizon, dim)"
+            assert p[0, 0, 0, 0] != p[0, 1, 0, 0], "Samples should be different"
 
     def test_transform_factory(self):
         self.model = LSTMForecaster(n_samples=self.n_samples, transform=["StandardScaler"])
