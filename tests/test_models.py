@@ -31,16 +31,25 @@ class DummyDataset(Dataset):
 
 
 class TestOnDummyDataset:
+
     def setup_class(self):
         self.horizon = 5
         self.batch_size = 32
         self.n_samples = 1000
         train_ds = DummyDataset(input_len=20, output_len=1)
         test_ds = DummyDataset(input_len=20, output_len=self.horizon)
-        self.train_dataloader = DataLoader(train_ds, batch_size=self.batch_size, shuffle=True)
-        self.val_dataloader = DataLoader(train_ds, batch_size=self.batch_size, shuffle=False)
-        self.test_dataloader = DataLoader(test_ds, batch_size=self.batch_size, shuffle=False)
-        self.pred_dataloader = DataLoader(test_ds, batch_size=self.batch_size, shuffle=False)
+        self.train_dataloader = DataLoader(
+            train_ds, batch_size=self.batch_size, shuffle=True
+        )
+        self.val_dataloader = DataLoader(
+            train_ds, batch_size=self.batch_size, shuffle=False
+        )
+        self.test_dataloader = DataLoader(
+            test_ds, batch_size=self.batch_size, shuffle=False
+        )
+        self.pred_dataloader = DataLoader(
+            test_ds, batch_size=self.batch_size, shuffle=False
+        )
 
     @pytest.mark.parametrize("ModelClass", model_classes)
     def test_init(self, ModelClass):
@@ -86,20 +95,41 @@ class TestOnDummyDataset:
             ), "Each prediction should have shape (batch_size, n_samples, horizon, dim)"
 
     def test_transform_factory(self):
-        self.model = LSTMForecaster(n_samples=self.n_samples, transform=["StandardScaler"])
+        self.model = LSTMForecaster(
+            n_samples=self.n_samples, transform=["StandardScaler"]
+        )
         self.model._create_model()
         # Transform should be a pipeline with StandardScaler
         assert len(self.model.model.transform.steps) == 1
         assert self.model.model.transform.steps[0][0] == "StandardScaler"
-        
+
         # Create a sample batch to test transform
         sample_data = torch.randn(self.batch_size, 20, 1)  # (batch, seq_len, features)
         transformed, params = self.model.model.transform.fit_transform(sample_data)
-        
+
         # Check that parameters have correct shapes (per-sample scaling)
-        assert params[0]['mean'].shape == (self.batch_size, 1, 1)
-        assert params[0]['std'].shape == (self.batch_size, 1, 1)
-        
+        assert params[0]["mean"].shape == (self.batch_size, 1, 1)
+        assert params[0]["std"].shape == (self.batch_size, 1, 1)
+
         self.model.fit(self.train_dataloader, self.val_dataloader)
         self.model.evaluate(self.test_dataloader)
         assert True, "Model should evaluate without errors"
+
+    @pytest.mark.parametrize("ModelClass", model_classes)
+    def test_save_and_load_checkpoint(self, tmp_path, ModelClass):
+        self.model = ModelClass(n_samples=self.n_samples)
+        self.model.fit(self.train_dataloader, self.val_dataloader)
+
+        ckpt_path = tmp_path / "model.ckpt"
+        self.model.save_checkpoint(str(ckpt_path))
+
+        # Load the model from checkpoint
+        new_model = ModelClass(n_samples=self.n_samples)
+        new_model._create_model()
+        new_model.load_checkpoint(str(ckpt_path))
+
+        # Compare model parameters to ensure they are the same
+        for p1, p2 in zip(self.model.model.parameters(), new_model.model.parameters()):
+            assert torch.allclose(
+                p1, p2, atol=1e-6
+            ), "Model weights do not match after loading checkpoint"
