@@ -10,7 +10,6 @@ packages = [{include = "binconvfm"}]
 python = "^3.11"
 lightning = "^2.5.2"
 pytorch_lightning = "^2.5.2"
-matplotlib = "^3.10.3"
 torch = "^2.1.0"
 huggingface-hub = ">=0.20.3"
 ts-preprocessing = "*"
