@@ -21,7 +21,7 @@ def create_model(ModelClass, input_len, n_samples, **kwargs):
             num_bins=1024,
             num_blocks=1,
             n_samples=n_samples,
-            **kwargs
+            **kwargs,
         )
     else:
         return ModelClass(n_samples=n_samples, **kwargs)
@@ -54,10 +54,18 @@ class TestOnDummyDataset:
         self.input_len = 20
         train_ds = DummyDataset(input_len=self.input_len, output_len=1)
         test_ds = DummyDataset(input_len=self.input_len, output_len=self.horizon)
-        self.train_dataloader = DataLoader(train_ds, batch_size=self.batch_size, shuffle=True)
-        self.val_dataloader = DataLoader(train_ds, batch_size=self.batch_size, shuffle=False)
-        self.test_dataloader = DataLoader(test_ds, batch_size=self.batch_size, shuffle=False)
-        self.pred_dataloader = DataLoader(test_ds, batch_size=self.batch_size, shuffle=False)
+        self.train_dataloader = DataLoader(
+            train_ds, batch_size=self.batch_size, shuffle=True
+        )
+        self.val_dataloader = DataLoader(
+            train_ds, batch_size=self.batch_size, shuffle=False
+        )
+        self.test_dataloader = DataLoader(
+            test_ds, batch_size=self.batch_size, shuffle=False
+        )
+        self.pred_dataloader = DataLoader(
+            test_ds, batch_size=self.batch_size, shuffle=False
+        )
 
     @pytest.mark.parametrize("ModelClass", model_classes)
     def test_init(self, ModelClass):
@@ -75,7 +83,9 @@ class TestOnDummyDataset:
 
     @pytest.mark.parametrize("ModelClass", model_classes)
     def test_fit(self, ModelClass):
-        self.model = create_model(ModelClass, self.input_len, n_samples=10, num_epochs=1)
+        self.model = create_model(
+            ModelClass, self.input_len, n_samples=10, num_epochs=1
+        )
         self.model.fit(self.train_dataloader, self.val_dataloader)
         assert True, "Model should fit without errors"
 
@@ -84,7 +94,7 @@ class TestOnDummyDataset:
         self.model = create_model(ModelClass, self.input_len, n_samples=self.n_samples)
         metrics = self.model.evaluate(self.test_dataloader)
         assert isinstance(metrics, dict), "Result should be a dictionary"
-        #TODO: what is that?
+        # TODO: what is that?
         # assert metrics["mase"] == pytest.approx(0.77, abs=1e-2)
         # assert metrics["crps"] == pytest.approx(0.41, abs=1e-2)
 
@@ -94,7 +104,8 @@ class TestOnDummyDataset:
         pred = self.model.predict(self.pred_dataloader, self.horizon)
         assert isinstance(pred, list), "Prediction should be a list"
         assert len(pred) == len(self.pred_dataloader), "Prediction length mismatch"
-        for p in pred[:-1]:
+        for i in range(len(pred) - 1):
+            p = pred[i]
             assert isinstance(p, torch.Tensor), "Each prediction should be a Tensor"
             assert p.shape == (
                 self.batch_size,
@@ -102,23 +113,25 @@ class TestOnDummyDataset:
                 self.horizon,
                 1,
             ), "Each prediction should have shape (batch_size, n_samples, horizon, dim)"
-            assert p[0, 0, 0, 0] != p[0, 1, 0, 0], "Samples should be different"
+        assert p[0, 0, 0, 0] != p[0, 1, 0, 0], "Samples should be different"
 
     def test_transform_factory(self):
-        self.model = LSTMForecaster(n_samples=self.n_samples, transform=["StandardScaler"])
+        self.model = LSTMForecaster(
+            n_samples=self.n_samples, transform=["StandardScaler"]
+        )
         self.model._create_model()
         # Transform should be a pipeline with StandardScaler
         assert len(self.model.model.transform.steps) == 1
         assert self.model.model.transform.steps[0][0] == "StandardScaler"
-        
+
         # Create a sample batch to test transform
         sample_data = torch.randn(self.batch_size, 20, 1)  # (batch, seq_len, features)
         transformed, params = self.model.model.transform.fit_transform(sample_data)
-        
+
         # Check that parameters have correct shapes (per-sample scaling)
-        assert params[0]['mean'].shape == (self.batch_size, 1, 1)
-        assert params[0]['std'].shape == (self.batch_size, 1, 1)
-        
+        assert params[0]["mean"].shape == (self.batch_size, 1, 1)
+        assert params[0]["std"].shape == (self.batch_size, 1, 1)
+
         self.model.fit(self.train_dataloader, self.val_dataloader)
         self.model.evaluate(self.test_dataloader)
         assert True, "Model should evaluate without errors"
