@@ -86,7 +86,7 @@ class TestOnDummyDataset:
     @pytest.mark.parametrize("ModelClass", model_classes)
     def test_fit(self, ModelClass):
         self.model = create_model(
-            ModelClass, self.input_len, n_samples=10, num_epochs=1
+            ModelClass, self.input_len, n_samples=self.n_samples, num_epochs=1
         )
         self.model.fit(self.train_dataloader, self.val_dataloader)
         assert True, "Model should fit without errors"
@@ -144,7 +144,9 @@ class TestOnDummyDataset:
 
     @pytest.mark.parametrize("ModelClass", model_classes)
     def test_save_and_load_checkpoint(self, tmp_path, ModelClass):
-        self.model = ModelClass(n_samples=self.n_samples)
+        self.model = create_model(
+            ModelClass, self.input_len, n_samples=self.n_samples, num_epochs=1
+        )
         self.model.fit(self.train_dataloader, self.val_dataloader)
 
         ckpt_path = tmp_path / "model.ckpt"
