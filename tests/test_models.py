@@ -104,6 +104,7 @@ class TestOnDummyDataset:
         pred = self.model.predict(self.pred_dataloader, self.horizon)
         assert isinstance(pred, list), "Prediction should be a list"
         assert len(pred) == len(self.pred_dataloader), "Prediction length mismatch"
+        different_samples = False
         for i in range(len(pred) - 1):
             p = pred[i]
             assert isinstance(p, torch.Tensor), "Each prediction should be a Tensor"
@@ -113,7 +114,10 @@ class TestOnDummyDataset:
                 self.horizon,
                 1,
             ), "Each prediction should have shape (batch_size, n_samples, horizon, dim)"
-        assert p[0, 0, 0, 0] != p[0, 1, 0, 0], "Samples should be different"
+            different_samples = different_samples or not torch.allclose(
+                p[:, 0, :, :], p[:, 1, :, :]
+            )
+        assert different_samples, "Samples should be different"
 
     def test_transform_factory(self):
         self.model = LSTMForecaster(
