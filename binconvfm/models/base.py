@@ -1,7 +1,7 @@
 from pytorch_lightning import Trainer
 from pytorch_lightning.loggers import CSVLogger
 from pytorch_lightning import LightningModule
-from binconvfm.utils.metrics import mase, crps
+from binconvfm.utils.metrics import mase, crps, nmae
 from abc import abstractmethod, ABC
 from typing import List, Optional, Dict, Any
 import torch
@@ -140,6 +140,28 @@ class BaseForecaster:
         self.model.horizon = horizon  # Set the horizon for the model
         return self.trainer.predict(self.model, pred_dataloader)
 
+    def save_checkpoint(self, filepath: str) -> None:
+        """
+        Save the model weights to the specified filepath using PyTorch Lightning Trainer's checkpointing.
+        Args:
+            filepath (str): Path to save the checkpoint file.
+        """
+        if self.model is None:
+            self._create_model()
+        if self.trainer is None:
+            self._create_trainer()
+        self.trainer.save_checkpoint(filepath)
+
+    def load_checkpoint(self, filepath: str) -> None:
+        """
+        Load the model weights from the specified checkpoint file using PyTorch Lightning.
+        Args:
+            filepath (str): Path to the checkpoint file.
+        """
+        if self.model is None:
+            self._create_model()
+        self.model = self.model.__class__.load_from_checkpoint(filepath)
+
 
 class BaseLightningModule(LightningModule):
     def __init__(
@@ -208,6 +230,7 @@ class BaseLightningModule(LightningModule):
         metrics = {
             "mase": mase(pred_seq, target_seq),
             "crps": crps(pred_seq, target_seq, self.quantiles),
+            "nmae": nmae(pred_seq, target_seq),
         }
         self.log_dict(metrics, prog_bar=True)
 

@@ -68,3 +68,35 @@ def crps(pred_seq: torch.Tensor, target_seq: torch.Tensor, quantiles: list[float
 
     # Return mean CRPS over quantiles, batch, output_len, and dim
     return loss.mean()
+
+
+def nmae(pred_seq: torch.Tensor, target_seq: torch.Tensor) -> torch.Tensor:
+    """
+    Compute aggregated Normalized Mean Absolute Error (NMAE).
+
+    Uses the median over predictive samples as point forecast, aggregates across
+    series (last dimension) per time-step, then computes the NMAE over time:
+
+        NMAE = sum_t |x_t^sum - xhat_t^sum| / sum_t |x_t^sum|
+
+    Returns the mean NMAE over the batch.
+    """
+    assert pred_seq.ndim == 4 and target_seq.ndim == 3
+    batch, n_samples, output_len, dim = pred_seq.shape
+    assert target_seq.shape == (batch, output_len, dim)
+
+    # Point forecast: median over samples -> (batch, output_len, dim)
+    pred_median = pred_seq.median(dim=1).values
+
+    # Aggregate across series/dim -> (batch, output_len)
+    pred_sum = pred_median.sum(dim=2)
+    target_sum = target_seq.sum(dim=2)
+
+    # Absolute errors per time, then sum over time
+    num = torch.abs(target_sum - pred_sum).sum(dim=1)  # (batch,)
+    den = torch.abs(target_sum).sum(dim=1)  # (batch,)
+
+    eps = 1e-8
+    nmae = num / (den + eps)
+
+    return nmae.mean()
