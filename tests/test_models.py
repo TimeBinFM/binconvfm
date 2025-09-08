@@ -47,6 +47,7 @@ class DummyDataset(Dataset):
 
 
 class TestOnDummyDataset:
+
     def setup_class(self):
         self.horizon = 5
         self.batch_size = 32
@@ -54,6 +55,7 @@ class TestOnDummyDataset:
         self.input_len = 20
         train_ds = DummyDataset(input_len=self.input_len, output_len=1)
         test_ds = DummyDataset(input_len=self.input_len, output_len=self.horizon)
+
         self.train_dataloader = DataLoader(
             train_ds, batch_size=self.batch_size, shuffle=True
         )
@@ -94,9 +96,9 @@ class TestOnDummyDataset:
         self.model = create_model(ModelClass, self.input_len, n_samples=self.n_samples)
         metrics = self.model.evaluate(self.test_dataloader)
         assert isinstance(metrics, dict), "Result should be a dictionary"
-        # TODO: what is that?
-        # assert metrics["mase"] == pytest.approx(0.77, abs=1e-2)
-        # assert metrics["crps"] == pytest.approx(0.41, abs=1e-2)
+        assert metrics["mase"] > 0, "MASE should be positive"
+        assert metrics["crps"] > 0, "CRPS should be positive"
+        assert metrics["nmae"] > 0, "NMAE should be positive"
 
     @pytest.mark.parametrize("ModelClass", model_classes)
     def test_predict(self, ModelClass):
@@ -135,3 +137,22 @@ class TestOnDummyDataset:
         self.model.fit(self.train_dataloader, self.val_dataloader)
         self.model.evaluate(self.test_dataloader)
         assert True, "Model should evaluate without errors"
+
+    @pytest.mark.parametrize("ModelClass", model_classes)
+    def test_save_and_load_checkpoint(self, tmp_path, ModelClass):
+        self.model = ModelClass(n_samples=self.n_samples)
+        self.model.fit(self.train_dataloader, self.val_dataloader)
+
+        ckpt_path = tmp_path / "model.ckpt"
+        self.model.save_checkpoint(str(ckpt_path))
+
+        # Load the model from checkpoint
+        new_model = ModelClass(n_samples=self.n_samples)
+        new_model._create_model()
+        new_model.load_checkpoint(str(ckpt_path))
+
+        # Compare model parameters to ensure they are the same
+        for p1, p2 in zip(self.model.model.parameters(), new_model.model.parameters()):
+            assert torch.allclose(
+                p1, p2, atol=1e-6
+            ), "Model weights do not match after loading checkpoint"
