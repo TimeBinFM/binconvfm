@@ -176,7 +176,7 @@ class LSTM(BaseModel):
         outputs = torch.cat(outputs, dim=1)  # (batch, horizon, 1)
         return outputs
 
-    def forecast(self, x: torch.Tensor, horizon: int, n_samples: int, n_samples_per_batch: Optional[int] = None) -> torch.Tensor:
+    def forecast(self, x: torch.Tensor, horizon: int, n_samples: int) -> torch.Tensor:
         """
         Sample from the model's output distribution in parallel using the batch dimension,
         with stochasticity introduced by random initialization of the hidden state.

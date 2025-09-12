@@ -202,7 +202,7 @@ class BinConv(BaseModel):
             num_blocks: int = 3,
             kernel_size_ffn: int = 51,
             dropout: float = 0.2,
-            n_samples_per_batch: int = None,
+            max_samples_per_batch: int = None,
     ) -> None:
         """
         Initialize the BinConv model.
@@ -220,7 +220,7 @@ class BinConv(BaseModel):
             num_blocks: Number of convolutional blocks
             kernel_size_ffn: Kernel size for feed-forward network
             dropout: Dropout rate
-            n_samples_per_batch: Number of samples to process per batch (defaults to all samples)
+            max_samples_per_batch: Number of maximum samples to process per batch (defaults to all samples)
 
         Raises:
             AssertionError: If kernel sizes are not odd
@@ -246,7 +246,7 @@ class BinConv(BaseModel):
         self.num_1d_layers = num_1d_layers
         self.num_blocks = num_blocks
         self.kernel_size_ffn = kernel_size_ffn
-        self.n_samples_per_batch = n_samples_per_batch
+        self.max_samples_per_batch = max_samples_per_batch
 
         logger.info(f'BinConv initialized - dropout: {dropout}')
 
@@ -413,13 +413,11 @@ class BinConv(BaseModel):
 
         return self._forward_single(x)
 
-    def forecast(self, x: torch.Tensor, horizon: int, n_samples: int,
-                 n_samples_per_batch: Optional[int] = None) -> torch.Tensor:
+    def forecast(self, x: torch.Tensor, horizon: int, n_samples: int) -> torch.Tensor:
         """Generate autoregressive forecasts for multiple horizons."""
 
-        if n_samples_per_batch is None:
-            n_samples_per_batch = n_samples
-            
+        max_samples_per_batch = self.max_samples_per_batch if  self.max_samples_per_batch else n_samples
+
         # Use deterministic mode if only 1 sample, otherwise sample
         is_sample = n_samples > 1
 
@@ -430,14 +428,14 @@ class BinConv(BaseModel):
         x_squeezed = x.squeeze(2)
         
         # Calculate number of batches needed
-        n_batches = (n_samples + n_samples_per_batch - 1) // n_samples_per_batch
+        n_batches = (n_samples + max_samples_per_batch - 1) // max_samples_per_batch
         
         all_forecasts = []
         
         for batch_idx in range(n_batches):
             # Calculate actual samples for this batch
-            start_sample = batch_idx * n_samples_per_batch
-            end_sample = min(start_sample + n_samples_per_batch, n_samples)
+            start_sample = batch_idx * max_samples_per_batch
+            end_sample = min(start_sample + max_samples_per_batch, n_samples)
             current_n_samples = end_sample - start_sample
             
             # Expand input for current number of samples

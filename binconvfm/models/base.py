@@ -32,8 +32,7 @@ class BaseModel(nn.Module, ABC):
         pass
 
     @abstractmethod
-    def forecast(self, x: torch.Tensor, horizon: int, n_samples: int,
-               n_samples_per_batch: Optional[int] = None) -> torch.Tensor:
+    def forecast(self, x: torch.Tensor, horizon: int, n_samples: int) -> torch.Tensor:
         """
         Sample from the model's output distribution.
         
