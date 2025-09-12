@@ -1,8 +1,8 @@
 import pytest
 import torch
 import torch.nn as nn
-from torch.utils.data import Dataset, DataLoader
 from binconvfm import models as _models
+from binconvfm.datamodules import DummyDatamodule
 from inspect import getmembers, isclass
 from binconvfm.models.base import BaseForecaster, BaseLightningModule
 from binconvfm.models.lstm import LSTMForecaster
@@ -11,44 +11,20 @@ from binconvfm.models.lstm import LSTMForecaster
 model_classes = [f[1] for f in getmembers(_models, isclass)]
 
 
-class DummyDataset(Dataset):
-    def __init__(self, input_len, output_len):
-        self.input_len = input_len
-        self.output_len = output_len
-        torch.manual_seed(0)  # For reproducibility
-        self.seq = torch.randn((1000, 1), dtype=torch.float32)
-        self.length = len(self.seq) - self.input_len - self.output_len + 1
-
-    def __len__(self):
-        return self.length
-
-    def __getitem__(self, idx):
-        input_seq = self.seq[idx : idx + self.input_len]
-        target_seq = self.seq[
-            idx + self.input_len : idx + self.input_len + self.output_len
-        ]
-        return input_seq, target_seq
-
-
 class TestOnDummyDataset:
 
     def setup_class(self):
+        self.input_len = 20
+        self.output_len = 1
         self.horizon = 5
         self.batch_size = 32
         self.n_samples = 1000
-        train_ds = DummyDataset(input_len=20, output_len=1)
-        test_ds = DummyDataset(input_len=20, output_len=self.horizon)
-        self.train_dataloader = DataLoader(
-            train_ds, batch_size=self.batch_size, shuffle=True
-        )
-        self.val_dataloader = DataLoader(
-            train_ds, batch_size=self.batch_size, shuffle=False
-        )
-        self.test_dataloader = DataLoader(
-            test_ds, batch_size=self.batch_size, shuffle=False
-        )
-        self.pred_dataloader = DataLoader(
-            test_ds, batch_size=self.batch_size, shuffle=False
+        self.datamodule = DummyDatamodule(
+            batch_size=self.batch_size,
+            horizon=self.horizon,
+            n_samples=self.n_samples,
+            input_len=self.input_len,
+            output_len=self.output_len,
         )
 
     @pytest.mark.parametrize("ModelClass", model_classes)
@@ -68,13 +44,13 @@ class TestOnDummyDataset:
     @pytest.mark.parametrize("ModelClass", model_classes)
     def test_fit(self, ModelClass):
         self.model = ModelClass(n_samples=self.n_samples)
-        self.model.fit(self.train_dataloader, self.val_dataloader)
+        self.model.fit(self.datamodule)
         assert True, "Model should fit without errors"
 
     @pytest.mark.parametrize("ModelClass", model_classes)
     def test_evaluate(self, ModelClass):
         self.model = ModelClass(n_samples=self.n_samples)
-        metrics = self.model.evaluate(self.test_dataloader)
+        metrics = self.model.evaluate(self.datamodule)
         assert isinstance(metrics, dict), "Result should be a dictionary"
         assert metrics["mase"] > 0, "MASE should be positive"
         assert metrics["crps"] > 0, "CRPS should be positive"
@@ -83,9 +59,11 @@ class TestOnDummyDataset:
     @pytest.mark.parametrize("ModelClass", model_classes)
     def test_predict(self, ModelClass):
         self.model = ModelClass(n_samples=self.n_samples)
-        pred = self.model.predict(self.pred_dataloader, self.horizon)
+        pred = self.model.predict(self.datamodule, self.horizon)
         assert isinstance(pred, list), "Prediction should be a list"
-        assert len(pred) == len(self.pred_dataloader), "Prediction length mismatch"
+        assert (
+            len(pred) == len(self.datamodule.pred_ds) // self.batch_size + 1
+        ), "Prediction length mismatch"
         for p in pred[:-1]:
             assert isinstance(p, torch.Tensor), "Each prediction should be a Tensor"
             assert p.shape == (
@@ -112,14 +90,14 @@ class TestOnDummyDataset:
         assert params[0]["mean"].shape == (self.batch_size, 1, 1)
         assert params[0]["std"].shape == (self.batch_size, 1, 1)
 
-        self.model.fit(self.train_dataloader, self.val_dataloader)
-        self.model.evaluate(self.test_dataloader)
+        self.model.fit(self.datamodule)
+        self.model.evaluate(self.datamodule)
         assert True, "Model should evaluate without errors"
 
     @pytest.mark.parametrize("ModelClass", model_classes)
     def test_save_and_load_checkpoint(self, tmp_path, ModelClass):
         self.model = ModelClass(n_samples=self.n_samples)
-        self.model.fit(self.train_dataloader, self.val_dataloader)
+        self.model.fit(self.datamodule)
 
         ckpt_path = tmp_path / "model.ckpt"
         self.model.save_checkpoint(str(ckpt_path))

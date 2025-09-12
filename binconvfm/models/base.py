@@ -70,33 +70,32 @@ class BaseForecaster:
             accelerator=self.accelerator,
         )
 
-    def fit(self, train_dataloader, val_dataloader=None) -> None:
+    def fit(self, datamodule) -> None:
         """Train the model using the provided dataloaders."""
         self._create_trainer()
         self._create_model()
         self.trainer.fit(
             model=self.model,
-            train_dataloaders=train_dataloader,
-            val_dataloaders=val_dataloader,
+            datamodule=datamodule,
         )
 
-    def evaluate(self, test_dataloader):
+    def evaluate(self, datamodule) -> dict:
         """Evaluate the model on the test dataloader."""
         if self.trainer is None:
             self._create_trainer()
         if self.model is None:
             self._create_model()
-        metrics = self.trainer.test(self.model, test_dataloader)
+        metrics = self.trainer.test(self.model, datamodule=datamodule)
         return metrics[0]  # Assuming single test dataloader and single result
 
-    def predict(self, pred_dataloader, horizon):
+    def predict(self, datamodule, horizon):
         """Generate predictions for the given dataloader and horizon."""
         if self.trainer is None:
             self._create_trainer()
         if self.model is None:
             self._create_model()
         self.model.horizon = horizon  # Set the horizon for the model
-        return self.trainer.predict(self.model, pred_dataloader)
+        return self.trainer.predict(self.model, datamodule=datamodule)
 
     def save_checkpoint(self, filepath: str) -> None:
         """
