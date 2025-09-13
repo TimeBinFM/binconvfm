@@ -11,6 +11,22 @@ from binconvfm.models.lstm import LSTMForecaster
 model_classes = [f[1] for f in getmembers(_models, isclass)]
 
 
+def create_model(ModelClass, input_len, n_samples, **kwargs):
+    """Create a model instance with appropriate parameters based on model type."""
+    if ModelClass.__name__ == "BinConvForecaster":
+        return ModelClass(
+            context_length=input_len,
+            num_filters_2d=input_len,
+            num_filters_1d=input_len,
+            num_bins=1024,
+            num_blocks=1,
+            n_samples=n_samples,
+            **kwargs,
+        )
+    else:
+        return ModelClass(n_samples=n_samples, **kwargs)
+
+
 class DummyDataset(Dataset):
     def __init__(self, input_len, output_len):
         self.input_len = input_len
@@ -35,9 +51,11 @@ class TestOnDummyDataset:
     def setup_class(self):
         self.horizon = 5
         self.batch_size = 32
-        self.n_samples = 1000
-        train_ds = DummyDataset(input_len=20, output_len=1)
-        test_ds = DummyDataset(input_len=20, output_len=self.horizon)
+        self.n_samples = 2
+        self.input_len = 20
+        train_ds = DummyDataset(input_len=self.input_len, output_len=1)
+        test_ds = DummyDataset(input_len=self.input_len, output_len=self.horizon)
+
         self.train_dataloader = DataLoader(
             train_ds, batch_size=self.batch_size, shuffle=True
         )
@@ -67,13 +85,15 @@ class TestOnDummyDataset:
 
     @pytest.mark.parametrize("ModelClass", model_classes)
     def test_fit(self, ModelClass):
-        self.model = ModelClass(n_samples=self.n_samples)
+        self.model = create_model(
+            ModelClass, self.input_len, n_samples=self.n_samples, num_epochs=1
+        )
         self.model.fit(self.train_dataloader, self.val_dataloader)
         assert True, "Model should fit without errors"
 
     @pytest.mark.parametrize("ModelClass", model_classes)
     def test_evaluate(self, ModelClass):
-        self.model = ModelClass(n_samples=self.n_samples)
+        self.model = create_model(ModelClass, self.input_len, n_samples=self.n_samples)
         metrics = self.model.evaluate(self.test_dataloader)
         assert isinstance(metrics, dict), "Result should be a dictionary"
         assert metrics["mase"] > 0, "MASE should be positive"
@@ -82,18 +102,24 @@ class TestOnDummyDataset:
 
     @pytest.mark.parametrize("ModelClass", model_classes)
     def test_predict(self, ModelClass):
-        self.model = ModelClass(n_samples=self.n_samples)
+        self.model = create_model(ModelClass, self.input_len, n_samples=self.n_samples)
         pred = self.model.predict(self.pred_dataloader, self.horizon)
         assert isinstance(pred, list), "Prediction should be a list"
         assert len(pred) == len(self.pred_dataloader), "Prediction length mismatch"
-        for p in pred[:-1]:
+        different_samples = False
+        for i in range(len(pred) - 1):
+            p = pred[i]
             assert isinstance(p, torch.Tensor), "Each prediction should be a Tensor"
             assert p.shape == (
                 self.batch_size,
-                self.model.n_samples,
+                self.n_samples,
                 self.horizon,
                 1,
             ), "Each prediction should have shape (batch_size, n_samples, horizon, dim)"
+            different_samples = different_samples or not torch.allclose(
+                p[:, 0, :, :], p[:, 1, :, :]
+            )
+        assert different_samples, "Samples should be different"
 
     def test_transform_factory(self):
         self.model = LSTMForecaster(
@@ -118,7 +144,9 @@ class TestOnDummyDataset:
 
     @pytest.mark.parametrize("ModelClass", model_classes)
     def test_save_and_load_checkpoint(self, tmp_path, ModelClass):
-        self.model = ModelClass(n_samples=self.n_samples)
+        self.model = create_model(
+            ModelClass, self.input_len, n_samples=self.n_samples, num_epochs=1
+        )
         self.model.fit(self.train_dataloader, self.val_dataloader)
 
         ckpt_path = tmp_path / "model.ckpt"
