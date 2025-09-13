@@ -1,27 +1,67 @@
 from pytorch_lightning import Trainer
 from pytorch_lightning.loggers import CSVLogger
 from pytorch_lightning import LightningModule
-import torch.nn as nn
 from binconvfm.utils.metrics import mase, crps, nmae
-from abc import abstractmethod
-from typing import List
+from abc import abstractmethod, ABC
+from typing import List, Optional, Dict, Any
+import torch
+import torch.nn as nn
 from binconvfm.transform.factory import TransformFactory
+
+
+class BaseModel(nn.Module, ABC):
+    """
+    Abstract base class for neural network models used in time series forecasting.
+    
+    This interface defines the common API that all forecasting models must implement.
+    Models inheriting from this class should implement the forward and sample methods.
+    """
+
+    @abstractmethod
+    def forward(self, x: torch.Tensor, y: torch.Tensor = None) -> torch.Tensor:
+        """
+        Forward pass for sequence forecasting.
+        
+        Args:
+            x (Tensor): Input sequence of shape (batch, seq_len, features).
+            y (Tensor): Target sequence for teacher forcing, shape (batch, horizon, features).
+            
+        Returns:
+            Tensor: Forecast of shape (batch, horizon, features).
+        """
+        pass
+
+    @abstractmethod
+    def forecast(self, x: torch.Tensor, horizon: int, n_samples: int) -> torch.Tensor:
+        """
+        Sample from the model's output distribution.
+        
+        Args:
+            x (Tensor): Input sequence of shape (batch, seq_len, features).
+            horizon (int): Forecasting horizon (length of output sequence).
+            n_samples (int): Number of samples to generate.
+            
+        Returns:
+            Tensor: Sampled sequences of shape (batch, n_samples, horizon, features).
+        """
+        pass
 
 
 class BaseForecaster:
     def __init__(
-        self,
-        n_samples: int = 1000,
-        quantiles: list[float] = [(i + 1) / 10 for i in range(9)],
-        batch_size: int = 32,
-        num_epochs: int = 10,
-        lr: float = 0.001,
-        accelerator: str = "cpu",
-        enable_progress_bar: bool = True,
-        logging: bool = False,
-        log_every_n_steps: int = 10,
-        transform: List[str] = ["IdentityTransform"],
-        **kwargs
+            self,
+            n_samples: int = 1000,
+            quantiles: list[float] = [(i + 1) / 10 for i in range(9)],
+            batch_size: int = 32,
+            num_epochs: int = 10,
+            lr: float = 0.001,
+            accelerator: str = "cpu",
+            enable_progress_bar: bool = True,
+            logging: bool = False,
+            log_every_n_steps: int = 10,
+            transform: List[str] = ["IdentityTransform"],
+            transform_args: Optional[Dict[str, Dict[str, Any]]] = None,
+            **kwargs
     ):
         """
         Initializes the base model with the specified configuration.
@@ -50,6 +90,7 @@ class BaseForecaster:
             self.logger = CSVLogger(save_dir="logs")
         self.log_every_n_steps = log_every_n_steps
         self.transform = transform
+        self.transform_args = transform_args or {}
         self.kwargs = kwargs  # Store model-specific parameters
         self.trainer = None
         self.model = None
@@ -122,11 +163,12 @@ class BaseForecaster:
 
 class BaseLightningModule(LightningModule):
     def __init__(
-        self,
-        n_samples: int,
-        quantiles: List[float],
-        lr: float,
-        transform: List[str],
+            self,
+            n_samples: int,
+            quantiles: List[float],
+            lr: float,
+            transform: List[str],
+            transform_args: Optional[Dict[str, Dict[str, Any]]] = None,
     ):
         """
         Initializes the forecasting model with specified parameters.
@@ -146,7 +188,8 @@ class BaseLightningModule(LightningModule):
         self.quantiles = quantiles
         self.lr = lr
         # Always create a pipeline for consistency
-        self.transform = TransformFactory.create_pipeline(transform)
+        self.transform_args = transform_args or {}
+        self.transform = TransformFactory.create_pipeline(transform, self.transform_args)
         self.horizon = None
 
     def training_step(self, batch, batch_idx: int):
@@ -179,7 +222,7 @@ class BaseLightningModule(LightningModule):
         # Fit transform on input sequence and store params
         input_seq, transform_params = self.transform.fit_transform(input_seq)
         # Generate predictions
-        pred_seq = self.model.sample(input_seq, target_seq.shape[1], self.n_samples)
+        pred_seq = self.model.forecast(input_seq, target_seq.shape[1], self.n_samples)
         # Inverse transform predictions to original scale
         pred_seq = self.transform.inverse_transform(pred_seq, transform_params)
         metrics = {
@@ -195,7 +238,7 @@ class BaseLightningModule(LightningModule):
         # Fit transform on input sequence and store params
         input_seq, transform_params = self.transform.fit_transform(input_seq)
         # Generate predictions
-        pred_seq = self.model.sample(input_seq, self.horizon, self.n_samples)
+        pred_seq = self.model.forecast(input_seq, self.horizon, self.n_samples)
         # Inverse transform predictions to original scale
         pred_seq = self.transform.inverse_transform(pred_seq, transform_params)
         return pred_seq
