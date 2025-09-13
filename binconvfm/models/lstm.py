@@ -86,6 +86,7 @@ class LSTMModule(BaseLightningModule):
             lr: float,
             transform: List[str],
             transform_args: Optional[Dict[str, Dict[str, Any]]] = None,
+            horizon: Optional[int] = None,
     ):
         """
         Initialize the LSTMModule for PyTorch Lightning training.
@@ -97,7 +98,7 @@ class LSTMModule(BaseLightningModule):
             quantiles (list[float]): List of quantiles for probabilistic forecasting.
             lr (float): Learning rate.
         """
-        super().__init__(n_samples, quantiles, lr, transform, transform_args)
+        super().__init__(n_samples, quantiles, lr, transform, transform_args, horizon)
         self.save_hyperparameters()
         self.model = LSTM(hidden_dim, n_layers)
 

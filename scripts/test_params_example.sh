@@ -1,0 +1,1 @@
+python main.py test --model LSTMModule --model.n_samples=100 --model.n_layers=1 --model.hidden_dim=64 --model.transform="[]" --model.quantiles="[0.1,0.5,0.9]" --model.lr=0.001 --data DummyDataModule --data.horizon=10 --data.input_len=20 --data.output_len=5 --data.batch_size=32 --ckpt_path='lightning_logs/version_4/checkpoints/epoch=4-step=155.ckpt'

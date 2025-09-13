@@ -1,6 +1,5 @@
-from pytorch_lightning import Trainer
-from pytorch_lightning.loggers import CSVLogger
-from pytorch_lightning import LightningModule
+from lightning.pytorch import Trainer, LightningModule
+from lightning.pytorch.loggers import CSVLogger
 from binconvfm.utils.metrics import mase, crps, nmae
 from abc import abstractmethod, ABC
 from typing import List, Optional, Dict, Any
@@ -169,6 +168,7 @@ class BaseLightningModule(LightningModule):
             lr: float,
             transform: List[str],
             transform_args: Optional[Dict[str, Dict[str, Any]]] = None,
+            horizon: Optional[int] = None,
     ):
         """
         Initializes the forecasting model with specified parameters.
@@ -190,7 +190,7 @@ class BaseLightningModule(LightningModule):
         # Always create a pipeline for consistency
         self.transform_args = transform_args or {}
         self.transform = TransformFactory.create_pipeline(transform, self.transform_args)
-        self.horizon = None
+        self.horizon = horizon
 
     def training_step(self, batch, batch_idx: int):
         """Run a single training step and return loss."""

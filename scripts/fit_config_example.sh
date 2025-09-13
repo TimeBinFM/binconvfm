@@ -1,0 +1,1 @@
+python main.py fit --config configs/dummy/lstm.yaml
