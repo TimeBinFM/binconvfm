@@ -2,7 +2,7 @@ import pytest
 import torch
 import torch.nn as nn
 from binconvfm import models as _models
-from binconvfm.datamodules import DummyDatamodule
+from binconvfm.datamodules import DummyDataModule
 from inspect import getmembers, isclass
 from binconvfm.models.base import BaseForecaster, BaseLightningModule
 from binconvfm.models.lstm import LSTMForecaster
@@ -18,32 +18,13 @@ def create_model(ModelClass, input_len, n_samples, **kwargs):
             context_length=input_len,
             num_filters_2d=input_len,
             num_filters_1d=input_len,
-            num_bins=1024,
+            num_bins=16,
             num_blocks=1,
             n_samples=n_samples,
             **kwargs,
         )
     else:
         return ModelClass(n_samples=n_samples, **kwargs)
-
-
-class DummyDataset(Dataset):
-    def __init__(self, input_len, output_len):
-        self.input_len = input_len
-        self.output_len = output_len
-        torch.manual_seed(0)  # For reproducibility
-        self.seq = torch.randn((1000, 1), dtype=torch.float32)
-        self.length = len(self.seq) - self.input_len - self.output_len + 1
-
-    def __len__(self):
-        return self.length
-
-    def __getitem__(self, idx):
-        input_seq = self.seq[idx : idx + self.input_len]
-        target_seq = self.seq[
-            idx + self.input_len : idx + self.input_len + self.output_len
-        ]
-        return input_seq, target_seq
 
 
 class TestOnDummyDataset:
@@ -54,10 +35,9 @@ class TestOnDummyDataset:
         self.horizon = 5
         self.batch_size = 32
         self.n_samples = 1000
-        self.datamodule = DummyDatamodule(
+        self.datamodule = DummyDataModule(
             batch_size=self.batch_size,
             horizon=self.horizon,
-            n_samples=self.n_samples,
             input_len=self.input_len,
             output_len=self.output_len,
         )

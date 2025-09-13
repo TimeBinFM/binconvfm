@@ -22,12 +22,11 @@ class DummyDataset(Dataset):
         return input_seq, target_seq
 
 
-class DummyDatamodule(LightningDataModule):
+class DummyDataModule(LightningDataModule):
     def __init__(
         self,
         batch_size: int,
         horizon: int,
-        n_samples: int,
         input_len: int,
         output_len: int,
     ):
@@ -36,7 +35,6 @@ class DummyDatamodule(LightningDataModule):
         self.output_len = output_len
         self.batch_size = batch_size
         self.horizon = horizon
-        self.n_samples = n_samples
 
     def setup(self, stage: str):
         if stage == "fit":
@@ -44,7 +42,7 @@ class DummyDatamodule(LightningDataModule):
                 input_len=self.input_len, output_len=self.output_len
             )
             self.val_ds = DummyDataset(
-                input_len=self.input_len, output_len=self.horizon
+                input_len=self.input_len, output_len=self.output_len
             )
         elif stage == "test":
             self.test_ds = DummyDataset(
