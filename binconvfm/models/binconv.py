@@ -134,15 +134,15 @@ class BinConvModule(BaseLightningModule):
             num_blocks: int,
             kernel_size_ffn: int,
             dropout: float,
-            horizon: int,
             n_samples: int,
             quantiles: List[float],
             lr: float,
             transform: List[str],
             transform_args: Optional[Dict[str, Dict[str, Any]]] = None,
+            horizon: Optional[int] = None,
     ):
         """Initialize BinConvModule."""
-        super().__init__(n_samples, quantiles, lr, transform, transform_args)
+        super().__init__(n_samples, quantiles, lr, transform, transform_args, horizon)
         self.save_hyperparameters()
         # Create the BinConv model
         self.model = BinConv(

@@ -1,6 +1,5 @@
-from pytorch_lightning import Trainer
-from pytorch_lightning.loggers import CSVLogger
-from pytorch_lightning import LightningModule
+from lightning.pytorch import Trainer, LightningModule
+from lightning.pytorch.loggers import CSVLogger
 from binconvfm.utils.metrics import mase, crps, nmae
 from abc import abstractmethod, ABC
 from typing import List, Optional, Dict, Any
@@ -111,33 +110,32 @@ class BaseForecaster:
             accelerator=self.accelerator,
         )
 
-    def fit(self, train_dataloader, val_dataloader=None) -> None:
+    def fit(self, datamodule) -> None:
         """Train the model using the provided dataloaders."""
         self._create_trainer()
         self._create_model()
         self.trainer.fit(
             model=self.model,
-            train_dataloaders=train_dataloader,
-            val_dataloaders=val_dataloader,
+            datamodule=datamodule,
         )
 
-    def evaluate(self, test_dataloader):
+    def evaluate(self, datamodule) -> dict:
         """Evaluate the model on the test dataloader."""
         if self.trainer is None:
             self._create_trainer()
         if self.model is None:
             self._create_model()
-        metrics = self.trainer.test(self.model, test_dataloader)
+        metrics = self.trainer.test(self.model, datamodule=datamodule)
         return metrics[0]  # Assuming single test dataloader and single result
 
-    def predict(self, pred_dataloader, horizon):
+    def predict(self, datamodule, horizon):
         """Generate predictions for the given dataloader and horizon."""
         if self.trainer is None:
             self._create_trainer()
         if self.model is None:
             self._create_model()
         self.model.horizon = horizon  # Set the horizon for the model
-        return self.trainer.predict(self.model, pred_dataloader)
+        return self.trainer.predict(self.model, datamodule=datamodule)
 
     def save_checkpoint(self, filepath: str) -> None:
         """
@@ -170,6 +168,7 @@ class BaseLightningModule(LightningModule):
             lr: float,
             transform: List[str],
             transform_args: Optional[Dict[str, Dict[str, Any]]] = None,
+            horizon: Optional[int] = None,
     ):
         """
         Initializes the forecasting model with specified parameters.
@@ -191,7 +190,7 @@ class BaseLightningModule(LightningModule):
         # Always create a pipeline for consistency
         self.transform_args = transform_args or {}
         self.transform = TransformFactory.create_pipeline(transform, self.transform_args)
-        self.horizon = None
+        self.horizon = horizon
 
     def training_step(self, batch, batch_idx: int):
         """Run a single training step and return loss."""
