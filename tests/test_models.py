@@ -1,8 +1,8 @@
 import pytest
 import torch
 import torch.nn as nn
-from torch.utils.data import Dataset, DataLoader
 from binconvfm import models as _models
+from binconvfm.datamodules import DummyDataModule
 from inspect import getmembers, isclass
 from binconvfm.models.base import BaseForecaster, BaseLightningModule
 from binconvfm.models.lstm import LSTMForecaster
@@ -18,7 +18,7 @@ def create_model(ModelClass, input_len, n_samples, **kwargs):
             context_length=input_len,
             num_filters_2d=input_len,
             num_filters_1d=input_len,
-            num_bins=1024,
+            num_bins=16,
             num_blocks=1,
             n_samples=n_samples,
             **kwargs,
@@ -27,46 +27,19 @@ def create_model(ModelClass, input_len, n_samples, **kwargs):
         return ModelClass(n_samples=n_samples, **kwargs)
 
 
-class DummyDataset(Dataset):
-    def __init__(self, input_len, output_len):
-        self.input_len = input_len
-        self.output_len = output_len
-        torch.manual_seed(0)  # For reproducibility
-        self.seq = torch.randn((1000, 1), dtype=torch.float32)
-        self.length = len(self.seq) - self.input_len - self.output_len + 1
-
-    def __len__(self):
-        return self.length
-
-    def __getitem__(self, idx):
-        input_seq = self.seq[idx : idx + self.input_len]
-        target_seq = self.seq[
-            idx + self.input_len : idx + self.input_len + self.output_len
-        ]
-        return input_seq, target_seq
-
-
 class TestOnDummyDataset:
 
     def setup_class(self):
+        self.input_len = 20
+        self.output_len = 1
         self.horizon = 5
         self.batch_size = 32
-        self.n_samples = 2
-        self.input_len = 20
-        train_ds = DummyDataset(input_len=self.input_len, output_len=1)
-        test_ds = DummyDataset(input_len=self.input_len, output_len=self.horizon)
-
-        self.train_dataloader = DataLoader(
-            train_ds, batch_size=self.batch_size, shuffle=True
-        )
-        self.val_dataloader = DataLoader(
-            train_ds, batch_size=self.batch_size, shuffle=False
-        )
-        self.test_dataloader = DataLoader(
-            test_ds, batch_size=self.batch_size, shuffle=False
-        )
-        self.pred_dataloader = DataLoader(
-            test_ds, batch_size=self.batch_size, shuffle=False
+        self.n_samples = 1000
+        self.datamodule = DummyDataModule(
+            batch_size=self.batch_size,
+            horizon=self.horizon,
+            input_len=self.input_len,
+            output_len=self.output_len,
         )
 
     @pytest.mark.parametrize("ModelClass", model_classes)
@@ -88,13 +61,13 @@ class TestOnDummyDataset:
         self.model = create_model(
             ModelClass, self.input_len, n_samples=self.n_samples, num_epochs=1
         )
-        self.model.fit(self.train_dataloader, self.val_dataloader)
+        self.model.fit(self.datamodule)
         assert True, "Model should fit without errors"
 
     @pytest.mark.parametrize("ModelClass", model_classes)
     def test_evaluate(self, ModelClass):
         self.model = create_model(ModelClass, self.input_len, n_samples=self.n_samples)
-        metrics = self.model.evaluate(self.test_dataloader)
+        metrics = self.model.evaluate(self.datamodule)
         assert isinstance(metrics, dict), "Result should be a dictionary"
         assert metrics["mase"] > 0, "MASE should be positive"
         assert metrics["crps"] > 0, "CRPS should be positive"
@@ -103,9 +76,11 @@ class TestOnDummyDataset:
     @pytest.mark.parametrize("ModelClass", model_classes)
     def test_predict(self, ModelClass):
         self.model = create_model(ModelClass, self.input_len, n_samples=self.n_samples)
-        pred = self.model.predict(self.pred_dataloader, self.horizon)
+        pred = self.model.predict(self.datamodule, self.horizon)
         assert isinstance(pred, list), "Prediction should be a list"
-        assert len(pred) == len(self.pred_dataloader), "Prediction length mismatch"
+        assert (
+            len(pred) == len(self.datamodule.pred_ds) // self.batch_size + 1
+        ), "Prediction length mismatch"
         different_samples = False
         for i in range(len(pred) - 1):
             p = pred[i]
@@ -138,8 +113,8 @@ class TestOnDummyDataset:
         assert params[0]["mean"].shape == (self.batch_size, 1, 1)
         assert params[0]["std"].shape == (self.batch_size, 1, 1)
 
-        self.model.fit(self.train_dataloader, self.val_dataloader)
-        self.model.evaluate(self.test_dataloader)
+        self.model.fit(self.datamodule)
+        self.model.evaluate(self.datamodule)
         assert True, "Model should evaluate without errors"
 
     @pytest.mark.parametrize("ModelClass", model_classes)
@@ -147,7 +122,7 @@ class TestOnDummyDataset:
         self.model = create_model(
             ModelClass, self.input_len, n_samples=self.n_samples, num_epochs=1
         )
-        self.model.fit(self.train_dataloader, self.val_dataloader)
+        self.model.fit(self.datamodule)
 
         ckpt_path = tmp_path / "model.ckpt"
         self.model.save_checkpoint(str(ckpt_path))
