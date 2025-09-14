@@ -8,9 +8,12 @@ from preprocessing.transform.dataset_builder import Builder
 from preprocessing.transform.probabilistic_mixing_dataset import ProbabilisticMixingDataset
 from preprocessing.downloader.gift_eval import GiftEvalWrapperDataset
 from preprocessing.transform.concat_dataset import ConcatDataset
-
+from binconvfm.utils.download.gift_eval_pretrain_file_names import gift_eval_pretrain_file_names
 
 def list_arrow_files(dataset_name):
+    if dataset_name == "Salesforce/GiftEvalPretrain":
+        return gift_eval_pretrain_file_names
+
     # List all files in the Hugging Face dataset repo
     files = list_repo_files(dataset_name, repo_type="dataset")
     
