@@ -1,7 +1,21 @@
 import datasets
 import torch
+from binconvfm.utils.download.gift_eval_pretrain_file_names import gift_eval_pretrain_file_names
+from huggingface_hub import list_repo_files
+import re
 
-from binconvfm.utils.download.gift_eval import list_arrow_files
+def list_arrow_files(dataset_name):
+    if dataset_name == "Salesforce/GiftEvalPretrain":
+        return gift_eval_pretrain_file_names
+
+    # List all files in the Hugging Face dataset repo
+    files = list_repo_files(dataset_name, repo_type="dataset")
+    
+    # Filter files matching the pattern
+    pattern = re.compile(r".*data-\d+-of-\d+\.arrow$")
+    filtered_files = [f for f in files if pattern.match(f)]
+    
+    return filtered_files
 
 def get_file_names_per_dataset(dataset_name: str):
     file_names = list_arrow_files(dataset_name)
