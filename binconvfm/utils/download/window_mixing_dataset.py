@@ -1,4 +1,5 @@
 import random
+import torch
 from preprocessing.common import TensorIterableDataset
 from typing import List
 from torch.utils.data import IterableDataset, get_worker_info
@@ -38,7 +39,7 @@ class WindowMixingDataset(IterableDataset):
                 .map(shuffle_with_seed)
                 .flat()
                 .batch(self.batch_size)
-                .map(lambda t: (t[:, :-1], t[:, -1]))
+                .map(lambda batch: (torch.stack(batch)[:, :-self.prediction_depth], torch.stack(batch)[:, -self.prediction_depth:]))
                 .build()
         )
         
