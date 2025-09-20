@@ -124,6 +124,9 @@ Desktop.ini
 # *.json
 # *.parquet
 
+# Time Series Format files
+*.tsf
+
 # Temporary files
 *.tmp
 *.temp
