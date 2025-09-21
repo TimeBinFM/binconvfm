@@ -53,6 +53,4 @@ class GiftEvalWindowedDataset(TensorIterableDataset):
             total_tensor = item['target']
             total_tensor_shape = total_tensor.shape
             for i in range(total_tensor_shape[0]):
-                X = total_tensor[i, :-self.prediction_depth]
-                y = total_tensor[i, -self.prediction_depth:]
-                yield X, y
+                yield total_tensor[i]
