@@ -1,5 +1,8 @@
 import itertools
-from binconvfm.utils.download.gift_eval import list_arrow_files, PostProcessingDataset
+
+import datasets
+from binconvfm.utils.download.gift_eval_util import list_arrow_files
+from binconvfm.utils.download.window_mixing_dataset import WindowMixingDataset
 from torch.utils.data import DataLoader, IterableDataset
 from pytorch_lightning import LightningDataModule
 import numpy as np

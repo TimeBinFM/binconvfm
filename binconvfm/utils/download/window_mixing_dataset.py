@@ -7,10 +7,9 @@ from preprocessing.transform.dataset_builder import Builder
 from preprocessing.transform.probabilistic_mixing_dataset import ProbabilisticMixingDataset
 
 class WindowMixingDataset(IterableDataset):
-    def __init__(self, windowed_datasets: List[TensorIterableDataset], window_size=32, prediction_depth=1, seed=42, batch_size=64, prefetch_depth=1024):
+    def __init__(self, windowed_datasets: List[TensorIterableDataset], prediction_depth=1, seed=42, batch_size=64, prefetch_depth=1024):
         super().__init__()
 
-        self.window_size = window_size
         self.prediction_depth = prediction_depth
         self.seed = seed
         self.batch_size = batch_size
