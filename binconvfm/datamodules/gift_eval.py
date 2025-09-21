@@ -69,10 +69,10 @@ class GiftEvalDataModule(LightningDataModule):
         np.random.seed(self.random_seed)
         if stage == "fit":
             train_file_names = np.random.choice(
-                self.file_names, self.num_files, replace=False
+                self.file_names, self.train_num_files, replace=False
             )
             val_file_names = np.random.choice(
-                self.file_names, self.num_files, replace=False
+                self.file_names, self.val_num_files, replace=False
             )
             self.train_ds = FirstNDataset(
                 PostProcessingDataset(
@@ -102,7 +102,7 @@ class GiftEvalDataModule(LightningDataModule):
             )
         elif stage == "test":
             test_file_names = np.random.choice(
-                self.file_names, self.num_files, replace=False
+                self.file_names, self.test_num_files, replace=False
             )
             self.test_ds = FirstNDataset(
                 PostProcessingDataset(
@@ -119,7 +119,7 @@ class GiftEvalDataModule(LightningDataModule):
             )
         elif stage == "predict":
             predict_file_names = np.random.choice(
-                self.file_names, self.num_files, replace=False
+                self.file_names, self.predict_num_files, replace=False
             )
             self.predict_ds = FirstNDataset(
                 PostProcessingDataset(
@@ -152,5 +152,5 @@ class GiftEvalDataModule(LightningDataModule):
 
     def predict_dataloader(self):
         return DataLoader(
-            self.pred_ds, shuffle=False, batch_size=None, num_workers=self.num_workers
+            self.predict_ds, shuffle=False, batch_size=None, num_workers=self.num_workers
         )
