@@ -1,7 +1,21 @@
 import datasets
 import torch
+from binconvfm.utils.download.gift_eval_pretrain_file_names import gift_eval_pretrain_file_names
+from huggingface_hub import list_repo_files
+import re
 
-from binconvfm.utils.download.gift_eval import list_arrow_files
+def list_arrow_files(dataset_name):
+    if dataset_name == "Salesforce/GiftEvalPretrain":
+        return gift_eval_pretrain_file_names
+
+    # List all files in the Hugging Face dataset repo
+    files = list_repo_files(dataset_name, repo_type="dataset")
+    
+    # Filter files matching the pattern
+    pattern = re.compile(r".*data-\d+-of-\d+\.arrow$")
+    filtered_files = [f for f in files if pattern.match(f)]
+    
+    return filtered_files
 
 def get_file_names_per_dataset(dataset_name: str):
     file_names = list_arrow_files(dataset_name)
@@ -12,17 +26,6 @@ def get_file_names_per_dataset(dataset_name: str):
             file_names_per_dataset[dataset_name] = []
         file_names_per_dataset[dataset_name].append(file_name)
     return file_names_per_dataset
-
-def get_target_dataset(dataset_name: str, file_names_to_process: list[str]):
-    ds = datasets.load_dataset(
-        dataset_name,
-        split='train',
-        data_files=file_names_to_process,
-        streaming=False,
-    )
-    ds.set_format(type='torch', columns=['target'])
-
-    return ds
 
 def dataset_to_window_tensors(dataset: datasets.Dataset, window_size: int, prediction_depth: int, step: int):
     tensor = torch.cat(list(dataset['target']), dim=0)

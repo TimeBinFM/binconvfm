@@ -1,5 +1,9 @@
 import itertools
-from binconvfm.utils.download.gift_eval import list_arrow_files, PostProcessingDataset
+
+import datasets
+from binconvfm.utils.download.gift_eval_util import list_arrow_files
+from binconvfm.utils.download.gift_eval_windowed_dataset import GiftEvalWindowedDataset
+from binconvfm.utils.download.window_mixing_dataset import WindowMixingDataset
 from torch.utils.data import DataLoader, IterableDataset
 from pytorch_lightning import LightningDataModule
 import numpy as np
@@ -28,9 +32,12 @@ class GiftEvalDataModule(LightningDataModule):
         batch_size: int = 64,
         output_len: int = 1,
         horizon: int = 10,
-        parallel_file_count: int = 2,
+        step: int = 1,
         dataset_name: str = "Salesforce/GiftEvalPretrain",
         num_workers: int = 0,
+        pre_batch_timeseries_count: int = 10,
+        prefetch_depth: int = 1024,
+        worker_prefetch_factor: int = 1000,
     ):
         """
         DataModule for GiftEval dataset.
@@ -45,9 +52,11 @@ class GiftEvalDataModule(LightningDataModule):
             batch_size (int): Batch size for DataLoader.
             output_len (int): Length of output sequences.
             horizon (int): Prediction horizon.
-            parallel_file_count (int): Number of files to process in parallel.
+            step (int): Step size for sliding window.
             dataset_name (str): Name of the dataset in Hugging Face Hub.
             num_workers (int): Number of workers for DataLoader.
+            pre_batch_timeseries_count (int): Number of timeseries to batch together.
+            prefetch_depth (int): Number of windows to prefetch
         """
         super().__init__()
         self.train_num_files = train_num_files
@@ -60,10 +69,13 @@ class GiftEvalDataModule(LightningDataModule):
         self.batch_size = batch_size
         self.output_len = output_len
         self.horizon = horizon
-        self.parallel_file_count = parallel_file_count
+        self.step = step
         self.dataset_name = dataset_name
         self.file_names = list_arrow_files(dataset_name)
         self.num_workers = num_workers
+        self.pre_batch_timeseries_count = pre_batch_timeseries_count
+        self.prefetch_depth = prefetch_depth
+        self.worker_prefetch_factor = worker_prefetch_factor
 
     def setup(self, stage: str):
         np.random.seed(self.random_seed)
@@ -75,29 +87,11 @@ class GiftEvalDataModule(LightningDataModule):
                 self.file_names, self.val_num_files, replace=False
             )
             self.train_ds = FirstNDataset(
-                PostProcessingDataset(
-                    file_names=train_file_names,
-                    window_size=self.input_len,
-                    seed=self.random_seed,
-                    batch_size=self.batch_size,
-                    prediction_depth=self.horizon,
-                    parallel_file_count=self.parallel_file_count,
-                    split="train",
-                    dataset_name=self.dataset_name,
-                ),
+                self._build_window_mixing_dataset(train_file_names),
                 self.n_rows,
             )
             self.val_ds = FirstNDataset(
-                PostProcessingDataset(
-                    file_names=val_file_names,
-                    window_size=self.input_len,
-                    seed=self.random_seed,
-                    batch_size=self.batch_size,
-                    prediction_depth=self.horizon,
-                    parallel_file_count=self.parallel_file_count,
-                    split="train",
-                    dataset_name=self.dataset_name,
-                ),
+                self._build_window_mixing_dataset(val_file_names),
                 self.n_rows,
             )
         elif stage == "test":
@@ -105,16 +99,7 @@ class GiftEvalDataModule(LightningDataModule):
                 self.file_names, self.test_num_files, replace=False
             )
             self.test_ds = FirstNDataset(
-                PostProcessingDataset(
-                    file_names=test_file_names,
-                    window_size=self.input_len,
-                    seed=self.random_seed,
-                    batch_size=self.batch_size,
-                    prediction_depth=self.horizon,
-                    parallel_file_count=self.parallel_file_count,
-                    split="test",
-                    dataset_name=self.dataset_name,
-                ),
+                self._build_window_mixing_dataset(test_file_names),
                 self.n_rows,
             )
         elif stage == "predict":
@@ -122,35 +107,66 @@ class GiftEvalDataModule(LightningDataModule):
                 self.file_names, self.predict_num_files, replace=False
             )
             self.predict_ds = FirstNDataset(
-                PostProcessingDataset(
-                    file_names=predict_file_names,
-                    window_size=self.input_len,
-                    seed=self.random_seed,
-                    batch_size=self.batch_size,
-                    prediction_depth=self.horizon,
-                    parallel_file_count=self.parallel_file_count,
-                    split="test",
-                    dataset_name=self.dataset_name,
-                ),
+                self._build_window_mixing_dataset(predict_file_names),
                 self.n_rows,
             )
 
+    def _build_window_mixing_dataset(self, file_names: list[str]):
+        windowed_dataset = GiftEvalWindowedDataset(
+            dataset_name=self.dataset_name,
+            file_names=file_names, 
+            window_size=self.input_len, 
+            prediction_depth=self.horizon, 
+            step=self.step, 
+            batch_size=self.batch_size,
+            pre_batch_timeseries_count=self.pre_batch_timeseries_count
+        )
+
+        return WindowMixingDataset(
+            windowed_dataset=windowed_dataset, 
+            prediction_depth=self.horizon, 
+            seed=self.random_seed, 
+            batch_size=self.batch_size, 
+            prefetch_depth=self.prefetch_depth
+        )
+        
+
     def train_dataloader(self):
         return DataLoader(
-            self.train_ds, shuffle=False, batch_size=None, num_workers=self.num_workers
+            self.train_ds, 
+            shuffle=False, 
+            batch_size=None, 
+            num_workers=self.num_workers,
+            persistent_workers=True,
+            prefetch_factor=self.worker_prefetch_factor,
         )
 
     def val_dataloader(self):
         return DataLoader(
-            self.val_ds, shuffle=False, batch_size=None, num_workers=self.num_workers
+            self.val_ds, 
+            shuffle=False, 
+            batch_size=None, 
+            num_workers=self.num_workers,
+            persistent_workers=True,
+            prefetch_factor=self.worker_prefetch_factor,
         )
 
     def test_dataloader(self):
         return DataLoader(
-            self.test_ds, shuffle=False, batch_size=None, num_workers=self.num_workers
+            self.test_ds, 
+            shuffle=False, 
+            batch_size=None, 
+            num_workers=self.num_workers,
+            persistent_workers=True,
+            prefetch_factor=self.worker_prefetch_factor,
         )
 
     def predict_dataloader(self):
         return DataLoader(
-            self.predict_ds, shuffle=False, batch_size=None, num_workers=self.num_workers
+            self.predict_ds, 
+            shuffle=False, 
+            batch_size=None, 
+            num_workers=self.num_workers,
+            persistent_workers=True,
+            prefetch_factor=self.worker_prefetch_factor,
         )
