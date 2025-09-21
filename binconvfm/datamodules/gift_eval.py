@@ -114,7 +114,6 @@ class GiftEvalDataModule(LightningDataModule):
             GiftEvalWindowedDataset(
                 dataset_name=self.dataset_name,
                 file_names=[file_name], 
-                batch_size=self.batch_size, 
                 window_size=self.input_len, 
                 prediction_depth=self.horizon, 
                 step=self.step, 

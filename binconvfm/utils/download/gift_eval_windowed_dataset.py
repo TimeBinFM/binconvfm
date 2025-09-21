@@ -3,13 +3,12 @@ import torch
 from preprocessing.common import TensorIterableDataset
 
 class GiftEvalWindowedDataset(TensorIterableDataset):
-    def __init__(self, dataset_name: str, file_names: list[str], batch_size: int, window_size: int, 
-                       prediction_depth: int, step: int, pre_batch_timeseries_count: int):
+    def __init__(self, dataset_name: str, file_names: list[str], window_size: int, 
+        prediction_depth: int, step: int, pre_batch_timeseries_count: int):
         super().__init__()
 
         self.dataset_name = dataset_name
         self.file_names = file_names
-        self.batch_size = batch_size
         self.window_size = window_size
         self.prediction_depth = prediction_depth
         self.step = step
@@ -46,12 +45,12 @@ class GiftEvalWindowedDataset(TensorIterableDataset):
         tensors = [self._item_to_window_tensor(item) for item in batch['target']]
         total_tensor = torch.cat(tensors)
         return {
-            'target': torch.split(total_tensor, self.batch_size)
+            'target': total_tensor
         }
         
     def __iter__(self):
-        for batch in self.dataset:
-            for item in batch['target']:
-                X = item[:, :-self.prediction_depth]
-                y = item[:, -self.prediction_depth:]
-                yield X, y
+        for item in self.dataset:
+            total_tensor = item['target']
+            X = total_tensor[:, :-self.prediction_depth]
+            y = total_tensor[:, -self.prediction_depth:]
+            yield X, y
