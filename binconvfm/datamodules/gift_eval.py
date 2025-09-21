@@ -37,6 +37,7 @@ class GiftEvalDataModule(LightningDataModule):
         num_workers: int = 0,
         pre_batch_timeseries_count: int = 10,
         prefetch_depth: int = 1024,
+        worker_prefetch_factor: int = 1000,
     ):
         """
         DataModule for GiftEval dataset.
@@ -74,6 +75,7 @@ class GiftEvalDataModule(LightningDataModule):
         self.num_workers = num_workers
         self.pre_batch_timeseries_count = pre_batch_timeseries_count
         self.prefetch_depth = prefetch_depth
+        self.worker_prefetch_factor = worker_prefetch_factor
 
     def setup(self, stage: str):
         np.random.seed(self.random_seed)
@@ -131,20 +133,40 @@ class GiftEvalDataModule(LightningDataModule):
 
     def train_dataloader(self):
         return DataLoader(
-            self.train_ds, shuffle=False, batch_size=None, num_workers=self.num_workers
+            self.train_ds, 
+            shuffle=False, 
+            batch_size=None, 
+            num_workers=self.num_workers,
+            persistent_workers=True,
+            prefetch_factor=self.worker_prefetch_factor,
         )
 
     def val_dataloader(self):
         return DataLoader(
-            self.val_ds, shuffle=False, batch_size=None, num_workers=self.num_workers
+            self.val_ds, 
+            shuffle=False, 
+            batch_size=None, 
+            num_workers=self.num_workers,
+            persistent_workers=True,
+            prefetch_factor=self.worker_prefetch_factor,
         )
 
     def test_dataloader(self):
         return DataLoader(
-            self.test_ds, shuffle=False, batch_size=None, num_workers=self.num_workers
+            self.test_ds, 
+            shuffle=False, 
+            batch_size=None, 
+            num_workers=self.num_workers,
+            persistent_workers=True,
+            prefetch_factor=self.worker_prefetch_factor,
         )
 
     def predict_dataloader(self):
         return DataLoader(
-            self.predict_ds, shuffle=False, batch_size=None, num_workers=self.num_workers
+            self.predict_ds, 
+            shuffle=False, 
+            batch_size=None, 
+            num_workers=self.num_workers,
+            persistent_workers=True,
+            prefetch_factor=self.worker_prefetch_factor,
         )
