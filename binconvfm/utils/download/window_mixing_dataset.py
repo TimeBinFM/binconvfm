@@ -2,11 +2,11 @@ import random
 import torch
 from preprocessing.common import TensorIterableDataset
 from typing import List
-from torch.utils.data import IterableDataset, get_worker_info
+from torch.utils.data import get_worker_info
 from preprocessing.transform.dataset_builder import Builder
 from preprocessing.transform.probabilistic_mixing_dataset import ProbabilisticMixingDataset
 
-class WindowMixingDataset(IterableDataset):
+class WindowMixingDataset(TensorIterableDataset):
     def __init__(self, windowed_datasets: List[TensorIterableDataset], prediction_depth=1, seed=42, batch_size=64, prefetch_depth=1024):
         super().__init__()
 
