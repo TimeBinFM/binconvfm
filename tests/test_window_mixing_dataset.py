@@ -37,31 +37,20 @@ class TestWindowMixingDataset:
         self.prefetch_depth = 8
         self.seed = 42
         
-        # Create sample data for each dataset - each item should be a single tensor
+        # Create sample data for each dataset - each item should be a 2D tensor (batch_size, window_size + prediction_depth)
         torch.manual_seed(42)
-        data1 = [torch.randn(self.window_size + self.prediction_depth) for _ in range(20)]
-        data2 = [torch.randn(self.window_size + self.prediction_depth) for _ in range(20)]
-        data3 = [torch.randn(self.window_size + self.prediction_depth) for _ in range(20)]
+        data1 = [torch.randn(self.batch_size, self.window_size + self.prediction_depth) for _ in range(20)]
         
-        self.windowed_datasets = [
-            MockTensorIterableDataset(data1, "dataset1"),
-            MockTensorIterableDataset(data2, "dataset2"),
-            MockTensorIterableDataset(data3, "dataset3"),
-        ]
+        self.windowed_dataset = MockTensorIterableDataset(data1, "dataset1")
 
-    @patch('binconvfm.utils.download.window_mixing_dataset.get_worker_info')
-    def test_single_dataset(self, mock_get_worker_info):
+    def test_single_dataset(self):
         """Test behavior with single dataset."""
         from binconvfm.utils.download.window_mixing_dataset import WindowMixingDataset
         
-        # Mock no worker info (single worker case)
-        mock_get_worker_info.return_value = None
-        
         # Create single dataset
-        single_dataset = [self.windowed_datasets[0]]
         
         dataset = WindowMixingDataset(
-            windowed_datasets=single_dataset,
+            windowed_dataset=self.windowed_dataset,
             prediction_depth=self.prediction_depth,
             seed=self.seed,
             batch_size=self.batch_size,

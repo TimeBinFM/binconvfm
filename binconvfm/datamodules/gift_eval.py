@@ -110,26 +110,23 @@ class GiftEvalDataModule(LightningDataModule):
             )
 
     def _build_window_mixing_dataset(self, file_names: list[str]):
-        windowed_datasets = [
-            GiftEvalWindowedDataset(
-                dataset_name=self.dataset_name,
-                file_names=[file_name], 
-                window_size=self.input_len, 
-                prediction_depth=self.horizon, 
-                step=self.step, 
-                pre_batch_timeseries_count=self.pre_batch_timeseries_count
-            )
-            for file_name in file_names
-        ]
+        windowed_dataset = GiftEvalWindowedDataset(
+            dataset_name=self.dataset_name,
+            file_names=file_names, 
+            window_size=self.input_len, 
+            prediction_depth=self.horizon, 
+            step=self.step, 
+            batch_size=self.batch_size,
+            pre_batch_timeseries_count=self.pre_batch_timeseries_count
+        )
 
         return WindowMixingDataset(
-            windowed_datasets=windowed_datasets, 
+            windowed_dataset=windowed_dataset, 
             prediction_depth=self.horizon, 
             seed=self.random_seed, 
             batch_size=self.batch_size, 
             prefetch_depth=self.prefetch_depth
         )
-
         
 
     def train_dataloader(self):
