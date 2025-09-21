@@ -7,12 +7,12 @@ behavior for windowed time series data mixing with single worker.
 
 import pytest
 import torch
-from torch.utils.data import IterableDataset
 from unittest.mock import patch
 from typing import List, Iterator
+from preprocessing.common import TensorIterableDataset
 
 # Mock TensorIterableDataset since it's from an external package
-class MockTensorIterableDataset(IterableDataset):
+class MockTensorIterableDataset(TensorIterableDataset):
     """Mock implementation of TensorIterableDataset for testing."""
     
     def __init__(self, data: List[torch.Tensor], name: str = "mock"):
@@ -62,7 +62,6 @@ class TestWindowMixingDataset:
         
         dataset = WindowMixingDataset(
             windowed_datasets=single_dataset,
-            window_size=self.window_size,
             prediction_depth=self.prediction_depth,
             seed=self.seed,
             batch_size=self.batch_size,
